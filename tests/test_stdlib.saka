@@ -1,0 +1,16 @@
+truthaboutgrain nums = [1, 2];
+push(nums, 3);
+Say(nums);
+
+Say(len(nums));
+
+truthaboutgrain profile = {"name": "SATA", "level": 6};
+Say(keys(profile));
+Say(values(profile));
+Say(contains(profile, "name"));
+
+truthaboutgrain text = "SATA";
+Say(slice(text, 1, 3));
+
+Hecho(nums);
+push(nums, 9);   // blocked

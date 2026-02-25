@@ -1,0 +1,8 @@
+function add(a b) {
+    return a + b;
+}
+
+truthaboutgrain x = add(2 3);
+Say(x);
+
+truthaboutgrain y = add(1); // This should fail with argument count error

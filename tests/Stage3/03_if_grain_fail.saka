@@ -1,0 +1,7 @@
+// Expected to fail: grain cannot be used in condition
+grain age = 20;
+
+if (age) {
+    // This should not execute
+    hecho("Error: grain used in condition");
+}

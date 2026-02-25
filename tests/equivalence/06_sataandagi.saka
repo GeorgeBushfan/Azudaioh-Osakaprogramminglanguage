@@ -1,0 +1,5 @@
+// Test SataAndagi runtime bootstrap/introspection
+// EXPECTED-DIAG: warnings 0
+
+truthaboutgrain info = SataAndagi();
+Say(info);

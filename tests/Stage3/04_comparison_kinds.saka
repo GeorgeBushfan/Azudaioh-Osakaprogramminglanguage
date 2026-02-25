@@ -1,0 +1,7 @@
+truthaboutgrain a = 5;
+truthaboutgrain b = 10;
+truthaboutgrain ok = a < b;
+
+grainsoftruth x = 5;
+truthaboutgrain y = 10;
+grainsoftruth uncertain = x < y;

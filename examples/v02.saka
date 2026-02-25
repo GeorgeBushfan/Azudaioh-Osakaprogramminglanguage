@@ -1,0 +1,18 @@
+// declare some data
+grainsoftruth rawAge = 42;
+truthaboutgrain verifiedAge = 40;
+
+Ah(verifiedAge);
+verifiedAge = verifiedAge + 1;
+Hecho(verifiedAge);
+
+// this will warn (Hecho on grain)
+Hecho(rawAge);
+
+// stabilise the system
+Getittogether;
+
+// move through abstraction
+Escalator reviewLevel2;
+Elevator policyLevel;
+

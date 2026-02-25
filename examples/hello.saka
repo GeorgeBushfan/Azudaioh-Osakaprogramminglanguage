@@ -1,0 +1,11 @@
+grainsoftruth report = 10;
+truthaboutgrain approved = 0;
+
+Elevator();
+report = report + 5;        // loses truth
+
+Getittogether();
+truthaboutgrain approved = report;
+
+Hecho(approved);
+approved = approved + 1;    // ignored but warned

@@ -1,0 +1,4 @@
+truthaboutgrain x = 10;
+Hecho(x);
+
+x = x + 1;   // not allowed

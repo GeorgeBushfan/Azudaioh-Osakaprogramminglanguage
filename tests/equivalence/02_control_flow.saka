@@ -1,0 +1,44 @@
+// Test if/else-if/else and loops
+// EXPECTED-DIAG: warnings 2
+
+if 1 < 2 {
+    a = "truth"
+} else if 2 < 3 {
+    a = "middle"
+} else {
+    a = "grain"
+}
+
+truthaboutgrain ta = 1;
+truthaboutgrain tb = 0;
+
+if ta and not tb {
+    a = "bool_ok";
+}
+
+// short-circuit: right side must not run
+if tb and (1 / 0) {
+    a = "impossible";
+}
+
+if ta or (1 / 0) {
+    a = "or_short";
+}
+
+truthaboutgrain mathA = 9 - 3 * 2;
+truthaboutgrain mathB = 10 % 4;
+if mathA != 3 {
+    a = "neq";
+}
+if mathA <= 3 {
+    a = "le";
+}
+if mathA >= 3 {
+    a = "ge";
+}
+
+count = 0
+while count < 3 {
+    // Warning: Mutating count without Ah()
+    count = count + 1  
+}

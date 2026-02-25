@@ -1,0 +1,11 @@
+grainsoftruth x = 10;
+youknowsealsright(x);
+x = x + 1;     // should NOT warn "mutated without Ah()"
+Say(x);
+
+truthaboutgrain profile = {"name":"SATA ANDAGI"};
+Ivebeengot(profile);
+
+profile["xp"] = 200;   // should warn + block
+push(profile, 1);      // should warn + block (and/or error if not list)
+Say(profile);

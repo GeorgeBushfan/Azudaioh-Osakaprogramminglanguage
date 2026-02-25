@@ -1,0 +1,8 @@
+truthaboutgrain age = 20;
+result: int = 0;
+
+if (age > 18) {
+    result = 1;
+}
+
+assert(result == 1);

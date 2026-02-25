@@ -1,0 +1,2 @@
+[console_scripts]
+osaka = saka:main

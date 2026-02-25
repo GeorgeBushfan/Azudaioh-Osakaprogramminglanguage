@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OsakaProgrammingLanguage"
+version = "1.0.0"
+description = "Osaka Programming Language CLI (interpreter + VM + equivalence lock)"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  { name = "GeorgeBushfan - James Alexander" }
+]
+dependencies = []
+
+[project.scripts]
+osaka = "saka:main"
+
+[tool.setuptools]
+py-modules = [
+  "arg_parser",
+  "ast_nodes",
+  "bytecode",
+  "compiler",
+  "equiv_lock",
+  "equiv_test",
+  "interpreter",
+  "lexer",
+  "parser",
+  "print_bytecode",
+  "run_tests",
+  "run_vm",
+  "runtime",
+  "saka",
+  "verifier",
+  "verify_tests",
+  "vm",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]

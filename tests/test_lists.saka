@@ -1,0 +1,11 @@
+truthaboutgrain nums = [1, 2, 3];
+Say(nums);
+
+truthaboutgrain x = nums[1];
+Say(x);
+
+truthaboutgrain mixed = ["Hi", 10, "World"];
+Say(mixed);
+
+grainsoftruth uncertain = [1, g];
+Say(uncertain);   // prints list + warns about grain element

@@ -1,0 +1,17 @@
+// JS-inspired Math object extensions
+// EXPECTED-DIAG: warnings 0
+
+truthaboutgrain pi = Math.PI;
+truthaboutgrain ee = Math.E;
+
+truthaboutgrain s = Math.sqrt(9);
+truthaboutgrain r1 = Math.round(2.5);
+truthaboutgrain r2 = Math.round(-1.5);
+truthaboutgrain t = Math.trunc(-3.8);
+truthaboutgrain sg1 = Math.sign(-7);
+truthaboutgrain sg2 = Math.sign(0);
+truthaboutgrain c = Math.clamp(11, 0, 10);
+
+if s == 3 and r1 == 3 and r2 == -1 and t == -3 and sg1 == -1 and sg2 == 0 and c == 10 {
+    Say("math_js_ok");
+}

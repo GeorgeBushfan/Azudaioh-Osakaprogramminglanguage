@@ -1,0 +1,13 @@
+// Test case for function call validation
+function add(a b) {
+    return a + b;
+}
+
+// Valid: Built-in function as statement
+Say("Hello");
+
+// Valid: User-defined function in expression
+truthaboutgrain x = add(2 3);
+
+// Invalid: User-defined function as statement
+add(5 7); // Should cause compiler error

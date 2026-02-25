@@ -1,0 +1,12 @@
+// Test error propagation
+// EXPECTED-DIAG: errors 1
+
+func risky() {
+    invalid = 1 / 0
+}
+
+try {
+    risky()
+} catch {
+    Say("Caught error")
+}

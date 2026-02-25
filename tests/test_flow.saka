@@ -1,0 +1,16 @@
+truthaboutgrain x = 0;
+
+while (x < 3) {
+    Say(x);
+    x = x + 1;
+}
+
+truthaboutgrain y = 5;
+if (y == 5) {
+    Say("OK");
+}
+
+grainsoftruth g = 1;
+if (g == 1) {          // should throw runtime error (truth-only condition)
+    Say("NOPE");
+}

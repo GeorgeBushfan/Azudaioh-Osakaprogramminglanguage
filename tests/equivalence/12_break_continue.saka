@@ -1,0 +1,30 @@
+// while + for break/continue behavior
+// EXPECTED-DIAG: warnings 4
+
+i = 0;
+sum = 0;
+
+while i < 8 {
+    i = i + 1;
+    if i == 3 {
+        continue;
+    }
+    if i == 7 {
+        break;
+    }
+    sum = sum + i;
+}
+
+// For-loop continue should still execute step via parser rewrite
+j = 0;
+steps = 0;
+for (j = 0; j < 5; j = j + 1) {
+    if j < 3 {
+        steps = steps + 1;
+        continue;
+    }
+}
+
+if sum == 18 and steps == 3 and i == 7 {
+    Say("break_continue_ok");
+}

@@ -1,0 +1,19 @@
+truthaboutgrain nums = [2, 3];
+nums[1] = 99;
+Say(nums);
+
+truthaboutgrain profile = {"name":"SATA"};
+profile["xp"] = 200;
+Say(profile);
+
+Ah(nums);
+Hecho(nums);
+nums[0] = 5;        // blocked
+
+grainsoftruth x = 10;
+youknowsealsright(x);
+x = x + 1;
+Say(x);
+
+Say(len(nums));
+Say(slice("SATA", 1, 3));

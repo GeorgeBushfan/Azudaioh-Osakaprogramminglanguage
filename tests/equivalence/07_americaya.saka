@@ -1,0 +1,6 @@
+// Test Americaya force-truth promotion semantics
+// EXPECTED-DIAG: warnings 0
+
+grainsoftruth g = 11;
+truthaboutgrain t = Americaya(g);
+Say(t);

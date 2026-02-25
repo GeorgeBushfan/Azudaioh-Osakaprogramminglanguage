@@ -1,0 +1,6 @@
+{
+    // Validate basic block behavior
+    x: int = 1;
+    x = x + 1;
+    assert(x == 2);
+}

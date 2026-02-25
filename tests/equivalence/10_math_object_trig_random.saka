@@ -1,0 +1,14 @@
+// Random + trig + hyperbolic Math coverage
+// EXPECTED-DIAG: warnings 0
+
+truthaboutgrain rnd = Math.random();
+truthaboutgrain s = Math.sin(0);
+truthaboutgrain c = Math.cos(0);
+truthaboutgrain t = Math.tan(0);
+truthaboutgrain sh = Math.sinh(0);
+truthaboutgrain ch = Math.cosh(0);
+truthaboutgrain th = Math.tanh(0);
+
+if rnd >= 0 and rnd < 1 and s == 0 and c == 1 and t == 0 and sh == 0 and ch == 1 and th == 0 {
+    Say("math_trig_random_ok");
+}

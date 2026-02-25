@@ -1,0 +1,13 @@
+function add(a, b) {
+    return a + b;
+}
+
+truthaboutgrain x = add(2, 3);
+Say(x);
+
+function greet(name) {
+    return "Hello, " + name;
+}
+
+truthaboutgrain g = greet("World");
+Say(g);

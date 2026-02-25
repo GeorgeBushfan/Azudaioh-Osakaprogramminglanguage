@@ -1,0 +1,21 @@
+
+// Basic literal string test
+truthaboutgrain a = "Hello";
+truthaboutgrain b = "World";
+
+// Test concatenation
+truthaboutgrain c = a + ", " + b + "!";
+
+// Print all
+Say(a);
+Say(b);
+Say(c);
+
+// Test mixed numeric + string
+truthaboutgrain numtest = "Value: " + 5;
+Say(numtest);
+
+// Grain test — should warn but print
+grainsoftruth g = "Uncertain ";
+truthaboutgrain h = g + "Data";
+Say(h);

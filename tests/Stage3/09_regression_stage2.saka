@@ -1,0 +1,5 @@
+x = 10;
+Ah(x);
+x = x + 5;
+Ohmygah(x);
+Hecho(x);

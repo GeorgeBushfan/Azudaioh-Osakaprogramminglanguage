@@ -1,0 +1,12 @@
+truthaboutgrain a = 1;
+a = 2;          // should warn
+Ah(a);
+a = 3;          // no warning
+
+grainsoftruth b = 10;
+youknowsealsright(b);
+b = 11;         // no warning
+
+truthaboutgrain nums = [1];
+push(nums, 2);  // no warning
+nums[0] = 9;    // warn (second mutation)

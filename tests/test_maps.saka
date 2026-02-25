@@ -1,0 +1,13 @@
+truthaboutgrain profile = {
+    "name": "SATA",
+    "level": 6
+};
+
+Say(profile);
+Say(profile["name"]);
+Say(profile["level"]);
+
+grainsoftruth bad = {
+    "x": g
+};
+Say(bad);

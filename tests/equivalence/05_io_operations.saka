@@ -1,0 +1,6 @@
+// Test I/O consistency
+// EXPECTED-DIAG: warnings 1
+
+Say("Starting test");
+// Warning: Using grain value in Say
+Say(123.45);

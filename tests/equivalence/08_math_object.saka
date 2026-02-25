@@ -1,0 +1,13 @@
+// Math object basic coverage
+// EXPECTED-DIAG: warnings 0
+
+truthaboutgrain a = Math.abs(-5);
+truthaboutgrain b = Math.min(4, 9);
+truthaboutgrain c = Math.max(4, 9);
+truthaboutgrain d = Math.pow(2, 3);
+truthaboutgrain e = Math.floor(3.9);
+truthaboutgrain f = Math.ceil(3.1);
+
+if a == 5 and b == 4 and c == 9 and d == 8 and e == 3 and f == 4 {
+    Say("math_ok");
+}

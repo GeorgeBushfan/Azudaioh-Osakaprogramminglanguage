@@ -1,0 +1,14 @@
+// std module import + namespaced std builtins
+// EXPECTED-DIAG: 0 warnings
+
+import std;
+
+truthaboutgrain nums = [1, 2];
+Ah(nums);
+std.push(nums, 3);
+
+truthaboutgrain m = {"a": 1};
+
+Say(std.len(nums));
+Say(nums[2]);
+Say(std.contains(m, "a"));

@@ -1,0 +1,13 @@
+function concat(a, b) {
+    return a + b;
+}
+
+truthaboutgrain x = concat("Hello, ", "World");
+Say(x);
+
+function addNumbers(a, b) {
+    return a + b;
+}
+
+truthaboutgrain y = addNumbers(2, 3);
+Say(y);

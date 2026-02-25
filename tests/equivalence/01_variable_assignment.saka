@@ -1,0 +1,11 @@
+// Test basic variable assignment and mutation
+// EXPECTED-DIAG: warnings 0
+
+Ah(x)  // Acknowledge before assignment
+x = 5
+x = x + 3
+Hecho(x)  // Finalize variable
+
+// Test grain vs truth propagation
+y = 7
+z = "hello"
