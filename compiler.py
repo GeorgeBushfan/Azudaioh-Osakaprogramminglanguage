@@ -17,7 +17,7 @@ from ast_nodes import (
     ListLiteral, MapLiteral, IndexAccess,
     Assign, Call, IndexAssign, CallExpr,
     If, While, Block, Compare, FunctionDef, Return, TryCatch, UnaryOp,
-    Break, Continue, Import,
+    Break, Continue, Import, Export,
 )
 
 class Compiler:
@@ -149,9 +149,34 @@ class Compiler:
             return
 
         if isinstance(node, Import):
-            const_index = self.add_const(node.module, "truth")
-            self.emit(PUSH_CONST, const_index, getattr(node, "line", -1))
-            self.emit(CALL_BUILTIN, ("__import_module__", 1), getattr(node, "line", -1))
+            if getattr(node, "is_path", False):
+                mod_idx = self.add_const(node.module, "truth")
+                alias = node.alias or node.module.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                alias_idx = self.add_const(alias, "truth")
+                self.emit(PUSH_CONST, mod_idx, getattr(node, "line", -1))
+                self.emit(PUSH_CONST, alias_idx, getattr(node, "line", -1))
+                self.emit(CALL_BUILTIN, ("__import_file_module__", 2), getattr(node, "line", -1))
+            else:
+                const_index = self.add_const(node.module, "truth")
+                self.emit(PUSH_CONST, const_index, getattr(node, "line", -1))
+                self.emit(CALL_BUILTIN, ("__import_module__", 1), getattr(node, "line", -1))
+            return
+
+        if isinstance(node, Export):
+            inner = node.node
+            if isinstance(inner, Assign):
+                self.compile_stmt(inner)
+                name_idx = self.add_const(inner.name, "truth")
+                self.emit(PUSH_CONST, name_idx, getattr(node, "line", -1))
+                self.emit(CALL_BUILTIN, ("__export_symbol__", 1), getattr(node, "line", -1))
+                return
+            if isinstance(inner, FunctionDef):
+                self.compile_function_def(inner)
+                name_idx = self.add_const(inner.name, "truth")
+                self.emit(PUSH_CONST, name_idx, getattr(node, "line", -1))
+                self.emit(CALL_BUILTIN, ("__export_symbol__", 1), getattr(node, "line", -1))
+                return
+            raise RuntimeError("Compiler: export currently supports only variable assignments/declarations")
             return
 
         if isinstance(node, Break):
@@ -281,6 +306,7 @@ class Compiler:
             BUILTIN_STATEMENT_FUNCS = {
                 "Say", "Ah", "Hecho", "youknowsealsright", 
                 "Ivebeengot", "Getittogether", "push", "pop",
+                "ReadFile", "WriteFile", "AppendFile", "FileExists", "DeleteFile",
                 "std.len", "std.keys", "std.values", "std.contains", "std.slice", "std.push", "std.pop",
                 "SataAndagi", "Americaya",
                 "Math.abs", "Math.min", "Math.max", "Math.pow", "Math.floor", "Math.ceil",
@@ -316,10 +342,16 @@ class Compiler:
     # ---------- expressions ----------
     def compile_expr(self, node):
         if isinstance(node, CallExpr):
+            if len(node.args) == 0 and "." in node.name and not node.name.startswith("Math.") and not node.name.startswith("std."):
+                # Namespaced module value read: alias.symbol
+                self.emit(LOAD_VAR, node.name, node.line)
+                return
+
             # Define built-in names first
             BUILTIN_NAMES = {
                 "Say", "len", "keys", "values", "contains", "slice",
                 "push", "pop",
+                "ReadFile", "WriteFile", "AppendFile", "FileExists", "DeleteFile",
                 "std.len", "std.keys", "std.values", "std.contains", "std.slice", "std.push", "std.pop",
                 "Ah", "Hecho", "youknowsealsright", "Ivebeengot",
                 "SataAndagi", "Americaya",
@@ -329,6 +361,8 @@ class Compiler:
                 "Math.random", "Math.sin", "Math.cos", "Math.tan",
                 "Math.sinh", "Math.cosh", "Math.tanh",
                 "__import_module__",
+                "__import_file_module__",
+                "__export_symbol__",
                 "__force_kind_grain__", "__force_kind_truth__",
                 "__to_bool_preserve_kind__", "__bool_and__", "__bool_or__", "__bool_not__",
             }

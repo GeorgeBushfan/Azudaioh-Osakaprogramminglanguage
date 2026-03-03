@@ -1,7 +1,12 @@
 # vm.py
 import time
 import math
+import os
 from typing import Any, Dict, List, Tuple
+from lexer import lex
+from parser import Parser
+from runtime import Runtime as CoreRuntime
+from compiler import Compiler
 from bytecode import (
     Value, BytecodeProgram,
     PUSH_CONST, LOAD_VAR, STORE_VAR, DUP, POP, ADD, SUB, MUL, DIV, MOD,
@@ -45,6 +50,65 @@ class VM:
     # ---------- helpers ----------
     def _truth_and(self, a: str, b: str) -> str:
         return "truth" if a == "truth" and b == "truth" else "grain"
+
+    def _resolve_file_path(self, path_value: Any) -> str:
+        if not isinstance(path_value, str):
+            path_value = str(path_value)
+        if hasattr(self.rt, "resolve_module_path"):
+            return self.rt.resolve_module_path(path_value)
+        if os.path.isabs(path_value):
+            return os.path.normpath(path_value)
+        base = os.path.dirname(self.rt.current_file) if getattr(self.rt, "current_file", None) else os.getcwd()
+        return os.path.normpath(os.path.join(base, path_value))
+
+    def _load_file_module(self, module_path: str):
+        resolved = self.rt.resolve_module_path(module_path)
+
+        if resolved in self.rt.module_cache:
+            return self.rt.module_cache[resolved]
+        if resolved in self.rt.module_loading:
+            raise RuntimeError(f"Circular module import detected: {resolved}")
+        if not os.path.exists(resolved):
+            raise RuntimeError(f"Module file not found: {resolved}")
+
+        self.rt.module_loading.add(resolved)
+        try:
+            with open(resolved, "r", encoding="utf-8") as f:
+                source = f.read()
+
+            tokens = lex(source)
+            ast = Parser(tokens).parse()
+            bytecode = Compiler().compile_program(ast)
+
+            module_rt = CoreRuntime()
+            module_rt.module_cache = self.rt.module_cache
+            module_rt.module_loading = self.rt.module_loading
+            module_rt.current_file = resolved
+            module_rt.collecting_exports = True
+            module_rt.current_module_exports = {}
+            module_rt._is_module_run = True
+            module_rt.debug = getattr(self.rt, "debug", False)
+            module_rt._math_seed = getattr(self.rt, "_math_seed", 123456789)
+
+            # Share output channels with importer run
+            module_rt.stdout = self.rt.stdout
+            module_rt.stderr = self.rt.stderr
+            module_rt.warnings = self.rt.warnings
+            module_rt.errors = self.rt.errors
+
+            VM(module_rt, debug=getattr(self.rt, "debug", False)).run(bytecode)
+
+            self.rt._math_seed = getattr(module_rt, "_math_seed", self.rt._math_seed)
+
+            module_obj = {
+                "path": resolved,
+                "exports": module_rt.current_module_exports or {},
+                "functions": dict(bytecode.functions or {}),
+            }
+            self.rt.module_cache[resolved] = module_obj
+            return module_obj
+        finally:
+            self.rt.module_loading.discard(resolved)
 
     def _next_random(self) -> float:
         # Deterministic RNG for interpreter/VM equivalence
@@ -182,6 +246,49 @@ class VM:
             self.rt.imports = imports
             return Value(None, "truth")
 
+        if name == "__import_file_module__":
+            module_path = args[0].data
+            alias = args[1].data
+            module_obj = self._load_file_module(module_path)
+            frame = self.frames[-1]
+            for export_name, export_data in module_obj["exports"].items():
+                fq_name = f"{alias}.{export_name}"
+                if export_data.get("type") == "value":
+                    val = Value(export_data["value"], export_data.get("kind", "grain"))
+                    self.scopes[-1][fq_name] = val
+                    if hasattr(self.rt, "var_kinds"):
+                        self.rt.var_kinds[fq_name] = val.kind
+                    if hasattr(self.rt, "initialised"):
+                        self.rt.initialised.add(fq_name)
+                elif export_data.get("type") == "function":
+                    fn_name = export_data.get("name", export_name)
+                    fn = module_obj.get("functions", {}).get(fn_name)
+                    if fn is None:
+                        raise RuntimeError(f"Exported function not found in module: {export_name}")
+                    frame.functions[fq_name] = fn
+                else:
+                    raise RuntimeError(f"Unknown export type for {export_name}")
+            return Value(None, "truth")
+
+        if name == "__export_symbol__":
+            if not getattr(self.rt, "collecting_exports", False) or getattr(self.rt, "current_module_exports", None) is None:
+                raise RuntimeError("export can only be used inside module files")
+            symbol_name = args[0].data
+            frame = self.frames[-1]
+            if symbol_name in frame.functions:
+                self.rt.current_module_exports[symbol_name] = {
+                    "type": "function",
+                    "name": symbol_name,
+                }
+            else:
+                val = self._get_var(frame, symbol_name)
+                self.rt.current_module_exports[symbol_name] = {
+                    "type": "value",
+                    "value": val.data,
+                    "kind": val.kind,
+                }
+            return Value(None, "truth")
+
         if name.startswith("std."):
             imports = getattr(self.rt, "imports", set())
             if "std" not in imports:
@@ -284,6 +391,67 @@ class VM:
             if not isinstance(x.data, (list, dict, str)):
                 raise RuntimeError("len() unsupported type")
             return Value(len(x.data), x.kind)
+
+        if name == "ReadFile":
+            if len(args) != 1:
+                raise RuntimeError("ReadFile() expects 1 argument")
+            path = args[0]
+            resolved = self._resolve_file_path(path.data)
+            try:
+                with open(resolved, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception as e:
+                raise RuntimeError(f"ReadFile failed: {e}")
+            return Value(content, path.kind)
+
+        if name == "WriteFile":
+            if len(args) != 2:
+                raise RuntimeError("WriteFile() expects 2 arguments")
+            path, content = args
+            resolved = self._resolve_file_path(path.data)
+            try:
+                parent = os.path.dirname(resolved)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                with open(resolved, "w", encoding="utf-8") as f:
+                    f.write(str(content.data))
+            except Exception as e:
+                raise RuntimeError(f"WriteFile failed: {e}")
+            return Value(1, self._truth_and(path.kind, content.kind))
+
+        if name == "AppendFile":
+            if len(args) != 2:
+                raise RuntimeError("AppendFile() expects 2 arguments")
+            path, content = args
+            resolved = self._resolve_file_path(path.data)
+            try:
+                parent = os.path.dirname(resolved)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                with open(resolved, "a", encoding="utf-8") as f:
+                    f.write(str(content.data))
+            except Exception as e:
+                raise RuntimeError(f"AppendFile failed: {e}")
+            return Value(1, self._truth_and(path.kind, content.kind))
+
+        if name == "FileExists":
+            if len(args) != 1:
+                raise RuntimeError("FileExists() expects 1 argument")
+            path = args[0]
+            resolved = self._resolve_file_path(path.data)
+            return Value(1 if os.path.exists(resolved) else 0, path.kind)
+
+        if name == "DeleteFile":
+            if len(args) != 1:
+                raise RuntimeError("DeleteFile() expects 1 argument")
+            path = args[0]
+            resolved = self._resolve_file_path(path.data)
+            try:
+                if os.path.exists(resolved):
+                    os.remove(resolved)
+            except Exception as e:
+                raise RuntimeError(f"DeleteFile failed: {e}")
+            return Value(1, path.kind)
 
         if name == "keys":
             m = args[0]
@@ -619,12 +787,17 @@ class VM:
         self.rt.assumed = set()
         self.rt.var_kinds = {}
         self.rt.imports = set()
+        self.rt.module_cache = getattr(self.rt, "module_cache", {})
+        self.rt.module_loading = getattr(self.rt, "module_loading", set())
+        self.rt.collecting_exports = getattr(self.rt, "collecting_exports", False)
+        self.rt.current_module_exports = getattr(self.rt, "current_module_exports", None)
         
-        # Clear I/O buffers
-        self.rt.stdout.seek(0)
-        self.rt.stdout.truncate(0)
-        self.rt.stderr.seek(0)
-        self.rt.stderr.truncate(0)
+        # Clear I/O buffers for top-level runs only.
+        if not getattr(self.rt, "_is_module_run", False):
+            self.rt.stdout.seek(0)
+            self.rt.stdout.truncate(0)
+            self.rt.stderr.seek(0)
+            self.rt.stderr.truncate(0)
         
         # Debug: show trace initialization
         if self.debug:

@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+from pathlib import Path
 from runtime import Runtime
 from interpreter import Interpreter
 from compiler import Compiler
@@ -47,6 +48,7 @@ def run_ast_interpreter(source_path):
     program = parser.parse()
     
     rt = Runtime()
+    rt.current_file = str(Path(source_path).resolve())
     interpreter = Interpreter(rt)
     interpreter.run(program)
     
@@ -69,6 +71,7 @@ def run_bytecode_vm(source_path):
     bytecode = compiler.compile(program)
     
     rt = Runtime()
+    rt.current_file = str(Path(source_path).resolve())
     vm = VM(rt)
     vm.run(bytecode)
     

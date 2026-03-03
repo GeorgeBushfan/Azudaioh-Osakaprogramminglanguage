@@ -49,9 +49,12 @@ def make_runtime() -> Runtime:
     return rt
 
 
-def run_interpreter(ast, debug=False) -> RunResult:
+def run_interpreter(ast, debug=False, source_path: Optional[str] = None) -> RunResult:
     rt = make_runtime()
     rt.debug = debug  # Set debug mode
+    if source_path:
+        import os
+        rt.current_file = os.path.abspath(source_path)
     buf = io.StringIO()
     stderr_buf = io.StringIO()
 
@@ -83,9 +86,12 @@ def run_interpreter(ast, debug=False) -> RunResult:
     )
 
 
-def run_vm(ast, debug=False) -> RunResult:
+def run_vm(ast, debug=False, source_path: Optional[str] = None) -> RunResult:
     rt = make_runtime()
     rt.debug = debug  # Set debug mode
+    if source_path:
+        import os
+        rt.current_file = os.path.abspath(source_path)
     buf = io.StringIO()
     stderr_buf = io.StringIO()
 
@@ -179,8 +185,8 @@ def main():
 
     ast = parse_ast(src)
 
-    interp = run_interpreter(ast)
-    vm = run_vm(ast)
+    interp = run_interpreter(ast, source_path=path)
+    vm = run_vm(ast, source_path=path)
 
     show_diff("INTERP", interp, "VM", vm)
 

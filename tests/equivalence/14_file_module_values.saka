@@ -1,0 +1,4 @@
+import "./modules/mod_values.saka" as mod;
+
+Say(mod.greeting());
+Say(mod.answer());

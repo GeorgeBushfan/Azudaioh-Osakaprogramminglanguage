@@ -50,6 +50,8 @@ KEYWORDS = {
     "break",
     "continue",
     "import",
+    "as",
+    "export",
     "else",
     "and",
     "or",

@@ -70,7 +70,13 @@ Recognized keywords:
 - Error handling: `try { ... } catch { ... }`
 - Block: `{ ... }`
 - Calls: `name(args...);`
-- Module imports: `import moduleName;`
+- Module imports:
+  - `import moduleName;`
+  - `import "relative/or/absolute/path.saka" as alias;`
+- Exports:
+  - `export truthaboutgrain x = expr;`
+  - `export grainsoftruth x = expr;`
+  - `export function f(...) { ... }` (parsed; callable import support pending)
 - Declaration-style context statements:
   - `Escalator levelName;`
   - `Elevator levelName;`
@@ -220,6 +226,16 @@ Module namespace behavior:
 - `import std;` is supported.
 - Namespaced std calls supported: `std.len`, `std.keys`, `std.values`, `std.contains`, `std.slice`, `std.push`, `std.pop`.
 - `Say` remains a core builtin: use `Say(...)`, not `std.Say(...)`.
+
+File-module behavior:
+
+- Path imports are supported via `import "..." as alias;`.
+- Runtime resolves relative paths from the currently executing source file.
+- Module loading is cached per absolute path.
+- Circular imports are detected and raise runtime errors.
+- `export` currently supports value exports end-to-end (interpreter + VM/compiler).
+- Exported functions are callable through file-module imports.
+- Imported module values are currently referenced via `alias.name()` call-expression form.
 
 ---
 

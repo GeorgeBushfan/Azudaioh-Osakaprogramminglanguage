@@ -142,6 +142,7 @@ def main(argv=None):
 
     # Execute normally with interpreter
     rt = Runtime()
+    rt.current_file = str(pathlib.Path(args.source_file).resolve())
     if debug_mode:
         print("Running interpreter with debug mode...")
         rt.debug = True

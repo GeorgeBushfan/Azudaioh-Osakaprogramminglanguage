@@ -1,4 +1,5 @@
 # run_vm.py
+from pathlib import Path
 from lexer import lex
 from parser import Parser
 from runtime import Runtime
@@ -14,6 +15,7 @@ def run_file(path: str, debug: bool = False):
     ast = Parser(tokens).parse()
 
     rt = Runtime()
+    rt.current_file = str(Path(path).resolve())
 
     # ensure Stage 6D runtime fields exist (if not already)
     rt.initialised = getattr(rt, "initialised", set())

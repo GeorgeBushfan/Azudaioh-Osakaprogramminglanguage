@@ -80,12 +80,34 @@ class Parser:
         # Handle function definitions first
         if kind in ("FUNCTION", "FUNC"):
             return self.function_def()
+        if kind == "EXPORT":
+            tok = self.consume("EXPORT")
+            inner = self.statement()
+            return Export(inner, tok[2] if len(tok) > 2 else -1)
         if kind == "IMPORT":
             tok = self.consume("IMPORT")
-            name_tok = self.consume("IDENT")
+            is_path = False
+            alias = None
+            if self.peek()[0] == "STRING":
+                name_tok = self.consume("STRING")
+                module_name = name_tok[1].strip('"')
+                is_path = True
+                if self.peek()[0] == "AS":
+                    self.consume("AS")
+                    alias = self.consume("IDENT")[1]
+                else:
+                    # default alias from file stem
+                    stem = module_name.rsplit("/", 1)[-1]
+                    alias = stem.rsplit(".", 1)[0]
+            else:
+                name_tok = self.consume("IDENT")
+                module_name = name_tok[1]
+                if self.peek()[0] == "AS":
+                    self.consume("AS")
+                    alias = self.consume("IDENT")[1]
             if self.peek()[0] == "SEMICOL":
                 self.consume("SEMICOL")
-            return Import(name_tok[1], tok[2] if len(tok) > 2 else -1)
+            return Import(module_name, alias=alias, line=tok[2] if len(tok) > 2 else -1, is_path=is_path)
         if kind == "RETURN":
             return self.return_stmt()
         if kind == "BREAK":

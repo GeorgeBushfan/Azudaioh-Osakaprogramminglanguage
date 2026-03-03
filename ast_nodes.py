@@ -159,6 +159,13 @@ class Continue(Node):
         super().__init__(line)
 
 class Import(Node):
-    def __init__(self, module, line=-1):
+    def __init__(self, module, alias=None, line=-1, is_path=False):
         super().__init__(line)
         self.module = module
+        self.alias = alias
+        self.is_path = is_path
+
+class Export(Node):
+    def __init__(self, node, line=-1):
+        super().__init__(line)
+        self.node = node

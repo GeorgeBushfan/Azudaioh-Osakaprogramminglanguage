@@ -1,5 +1,6 @@
 
 import time
+import os
 
 class Runtime:
     def __init__(self):
@@ -22,6 +23,12 @@ class Runtime:
         self.stderr = io.StringIO()  # Capture stderr
         self.execution_traces = []   # For equivalence lock tracing
         self.imports = set()
+        self.module_cache = {}
+        self.module_loading = set()
+        self.current_file = None
+        self.collecting_exports = False
+        self.current_module_exports = None
+        self._math_seed = 123456789
         
     def print(self, *args, **kwargs):
         output = " ".join(str(arg) for arg in args)
@@ -60,6 +67,12 @@ class Runtime:
             if name in scope:
                 return scope[name]
         raise RuntimeError(f"{name} not defined")
+
+    def resolve_module_path(self, module_path: str) -> str:
+        if os.path.isabs(module_path):
+            return os.path.normpath(module_path)
+        base = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
+        return os.path.normpath(os.path.join(base, module_path))
         
     def capture_trace(self, line_num, function_name=None, expression=None):
         """Capture interpreter execution state with enhanced context"""

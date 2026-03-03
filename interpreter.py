@@ -4,6 +4,11 @@ from ast_nodes import *
 import io
 import sys
 import math
+import os
+
+from lexer import lex
+from parser import Parser
+from runtime import Runtime as CoreRuntime
 
 
 class ReturnSignal(Exception):
@@ -79,6 +84,76 @@ class Interpreter:
         self.rt = runtime
         if not hasattr(self.rt, "imports"):
             self.rt.imports = set()
+        if not hasattr(self.rt, "module_cache"):
+            self.rt.module_cache = {}
+        if not hasattr(self.rt, "module_loading"):
+            self.rt.module_loading = set()
+        if not hasattr(self.rt, "current_file"):
+            self.rt.current_file = None
+        if not hasattr(self.rt, "collecting_exports"):
+            self.rt.collecting_exports = False
+        if not hasattr(self.rt, "current_module_exports"):
+            self.rt.current_module_exports = None
+        if not hasattr(self.rt, "imported_module_functions"):
+            self.rt.imported_module_functions = {}
+
+    def _resolve_file_path(self, path_value: str) -> str:
+        if not isinstance(path_value, str):
+            path_value = str(path_value)
+        if hasattr(self.rt, "resolve_module_path"):
+            return self.rt.resolve_module_path(path_value)
+        if os.path.isabs(path_value):
+            return os.path.normpath(path_value)
+        base = os.path.dirname(self.rt.current_file) if getattr(self.rt, "current_file", None) else os.getcwd()
+        return os.path.normpath(os.path.join(base, path_value))
+
+    def _load_file_module(self, module_path: str):
+        resolved = self.rt.resolve_module_path(module_path)
+
+        if resolved in self.rt.module_cache:
+            return self.rt.module_cache[resolved]
+        if resolved in self.rt.module_loading:
+            raise RuntimeError(f"Circular module import detected: {resolved}")
+        if not os.path.exists(resolved):
+            raise RuntimeError(f"Module file not found: {resolved}")
+
+        self.rt.module_loading.add(resolved)
+        try:
+            with open(resolved, "r", encoding="utf-8") as f:
+                source = f.read()
+
+            tokens = lex(source)
+            ast = Parser(tokens).parse()
+
+            module_rt = CoreRuntime()
+            module_rt.module_cache = self.rt.module_cache
+            module_rt.module_loading = self.rt.module_loading
+            module_rt.current_file = resolved
+            module_rt.collecting_exports = True
+            module_rt.current_module_exports = {}
+            module_rt.suppress_diagnostics = True
+            module_rt.debug = getattr(self.rt, "debug", False)
+            module_rt._math_seed = getattr(self.rt, "_math_seed", 123456789)
+
+            # Share outputs/diagnostics channels with importer run.
+            module_rt.stdout = self.rt.stdout
+            module_rt.stderr = self.rt.stderr
+            module_rt.warnings = self.rt.warnings
+            module_rt.errors = self.rt.errors
+
+            Interpreter(module_rt).run(ast)
+
+            self.rt._math_seed = getattr(module_rt, "_math_seed", self.rt._math_seed)
+
+            module_obj = {
+                "path": resolved,
+                "exports": module_rt.current_module_exports or {},
+                "functions": dict(module_rt.functions),
+            }
+            self.rt.module_cache[resolved] = module_obj
+            return module_obj
+        finally:
+            self.rt.module_loading.discard(resolved)
 
     def _resolve_std_name(self, name: str) -> str:
         std_aliases = {
@@ -145,7 +220,8 @@ class Interpreter:
                     expression=stmt.__class__.__name__
                 )
 
-        print(f"\nDiagnostics: {len(self.rt.warnings)} warning(s)")
+        if not getattr(self.rt, "suppress_diagnostics", False):
+            print(f"\nDiagnostics: {len(self.rt.warnings)} warning(s)")
 
     # ---------- Top-level dispatcher ----------
 
@@ -171,10 +247,64 @@ class Interpreter:
             raise ContinueSignal()
 
         if isinstance(node, Import):
+            if getattr(node, "is_path", False):
+                module_obj = self._load_file_module(node.module)
+                alias = node.alias
+                if not alias:
+                    stem = node.module.rsplit("/", 1)[-1]
+                    alias = stem.rsplit(".", 1)[0]
+
+                for export_name, export_data in module_obj["exports"].items():
+                    if export_data.get("type") == "value":
+                        fq_name = f"{alias}.{export_name}"
+                        self.rt.set_var(fq_name, export_data["value"])
+                        self.rt.var_kinds[fq_name] = export_data.get("kind", "grain")
+                        self.rt.initialised.add(fq_name)
+                    elif export_data.get("type") == "function":
+                        fq_name = f"{alias}.{export_name}"
+                        fn_name = export_data.get("name", export_name)
+                        fn = module_obj.get("functions", {}).get(fn_name)
+                        if fn is None:
+                            raise RuntimeError(f"Exported function not found in module: {export_name}")
+                        self.rt.functions[fq_name] = fn
+                        self.rt.imported_module_functions[fq_name] = {
+                            "function": fn,
+                            "module_functions": module_obj.get("functions", {}),
+                        }
+                    else:
+                        raise RuntimeError(f"Unknown export type for {export_name}")
+                return
+
             if node.module != "std":
                 raise RuntimeError(f"Unknown module {node.module}")
             self.rt.imports.add("std")
             return
+
+        if isinstance(node, Export):
+            if not self.rt.collecting_exports or self.rt.current_module_exports is None:
+                raise RuntimeError("export can only be used inside module files")
+
+            inner = node.node
+            if isinstance(inner, FunctionDef):
+                self.execute(inner)
+                self.rt.current_module_exports[inner.name] = {
+                    "type": "function",
+                    "name": inner.name,
+                }
+                return
+
+            if isinstance(inner, Assign):
+                self.execute(inner)
+                value = self.rt.get_var(inner.name)
+                kind = self.rt.var_kinds.get(inner.name, "grain")
+                self.rt.current_module_exports[inner.name] = {
+                    "type": "value",
+                    "value": value,
+                    "kind": kind,
+                }
+                return
+
+            raise RuntimeError("export currently supports variable declarations/assignments and functions")
 
         if isinstance(node, Block):
             self.exec_block(node)
@@ -722,6 +852,71 @@ class Interpreter:
                 raise RuntimeError("len() unsupported type")
             return len(value), kind
 
+        if name == "ReadFile":
+            if len(arg_list) != 1:
+                raise RuntimeError("ReadFile() expects 1 argument")
+            path_val, path_kind = self.eval(arg_list[0])
+            resolved = self._resolve_file_path(path_val)
+            try:
+                with open(resolved, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception as e:
+                raise RuntimeError(f"ReadFile failed: {e}")
+            return content, path_kind
+
+        if name == "WriteFile":
+            if len(arg_list) != 2:
+                raise RuntimeError("WriteFile() expects 2 arguments")
+            path_val, path_kind = self.eval(arg_list[0])
+            content_val, content_kind = self.eval(arg_list[1])
+            resolved = self._resolve_file_path(path_val)
+            try:
+                parent = os.path.dirname(resolved)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                with open(resolved, "w", encoding="utf-8") as f:
+                    f.write(str(content_val))
+            except Exception as e:
+                raise RuntimeError(f"WriteFile failed: {e}")
+            kind = "truth" if path_kind == "truth" and content_kind == "truth" else "grain"
+            return 1, kind
+
+        if name == "AppendFile":
+            if len(arg_list) != 2:
+                raise RuntimeError("AppendFile() expects 2 arguments")
+            path_val, path_kind = self.eval(arg_list[0])
+            content_val, content_kind = self.eval(arg_list[1])
+            resolved = self._resolve_file_path(path_val)
+            try:
+                parent = os.path.dirname(resolved)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                with open(resolved, "a", encoding="utf-8") as f:
+                    f.write(str(content_val))
+            except Exception as e:
+                raise RuntimeError(f"AppendFile failed: {e}")
+            kind = "truth" if path_kind == "truth" and content_kind == "truth" else "grain"
+            return 1, kind
+
+        if name == "FileExists":
+            if len(arg_list) != 1:
+                raise RuntimeError("FileExists() expects 1 argument")
+            path_val, path_kind = self.eval(arg_list[0])
+            resolved = self._resolve_file_path(path_val)
+            return (1 if os.path.exists(resolved) else 0), path_kind
+
+        if name == "DeleteFile":
+            if len(arg_list) != 1:
+                raise RuntimeError("DeleteFile() expects 1 argument")
+            path_val, path_kind = self.eval(arg_list[0])
+            resolved = self._resolve_file_path(path_val)
+            try:
+                if os.path.exists(resolved):
+                    os.remove(resolved)
+            except Exception as e:
+                raise RuntimeError(f"DeleteFile failed: {e}")
+            return 1, path_kind
+
         if name == "Say":
             if not arg_list:
                 self.rt.warn(f"Line {node.line}: Say() called without argument")
@@ -885,6 +1080,44 @@ class Interpreter:
     def call_function(self, call: CallExpr):
         name = self._resolve_std_name(call.name)
 
+        if name in self.rt.imported_module_functions:
+            fn_info = self.rt.imported_module_functions[name]
+            fn = fn_info.get("function")
+            if fn is None:
+                raise RuntimeError(f"Imported function {name} is unavailable")
+            if len(call.args) != len(fn.params):
+                raise RuntimeError(f"Argument count mismatch in {name}")
+
+            arg_values = [self.eval(arg)[0] for arg in call.args]
+
+            original_functions = self.rt.functions
+            merged = dict(self.rt.functions)
+            for mname, mfn in fn_info.get("module_functions", {}).items():
+                merged.setdefault(mname, mfn)
+            self.rt.functions = merged
+
+            self.rt.push_scope()
+            try:
+                for pname, pvalue in zip(fn.params, arg_values):
+                    self.rt.set_var(pname, pvalue)
+                    self.rt.var_kinds[pname] = "grain"
+                self.execute(fn.body)
+                raise RuntimeError(f"Function {name} missing return")
+            except ReturnSignal as ret:
+                return ret.value, ret.kind
+            finally:
+                self.rt.pop_scope()
+                self.rt.functions = original_functions
+
+        # Namespaced exported value access: alias.symbol
+        if len(call.args) == 0:
+            try:
+                value = self.rt.get_var(name)
+                kind = self.rt.var_kinds.get(name, "grain")
+                return value, kind
+            except RuntimeError:
+                pass
+
         if name.startswith("Math."):
             return self._eval_math_builtin(name, call.args, getattr(call, "line", -1))
 
@@ -932,7 +1165,12 @@ class Interpreter:
             "contains": lambda: self._handle_contains(call),
             "keys": lambda: (list(self.eval(call.args[0])[0].keys()), "truth"),
             "values": lambda: (list(self.eval(call.args[0])[0].values()), "truth"),
-            "slice": lambda: self._handle_slice(call)
+            "slice": lambda: self._handle_slice(call),
+            "ReadFile": lambda: self._handle_read_file(call),
+            "WriteFile": lambda: self._handle_write_file(call),
+            "AppendFile": lambda: self._handle_append_file(call),
+            "FileExists": lambda: self._handle_file_exists(call),
+            "DeleteFile": lambda: self._handle_delete_file(call),
         }
         
         if name in builtins:
@@ -990,3 +1228,62 @@ class Interpreter:
         a = self.eval(call.args[1])[0]
         b = self.eval(call.args[2])[0]
         return x[a:b], "truth"
+
+    def _handle_read_file(self, call):
+        self._validate_arg_count(call, 1)
+        path_val, path_kind = self.eval(call.args[0])
+        resolved = self._resolve_file_path(path_val)
+        try:
+            with open(resolved, "r", encoding="utf-8") as f:
+                return f.read(), path_kind
+        except Exception as e:
+            raise RuntimeError(f"ReadFile failed: {e}")
+
+    def _handle_write_file(self, call):
+        self._validate_arg_count(call, 2)
+        path_val, path_kind = self.eval(call.args[0])
+        content_val, content_kind = self.eval(call.args[1])
+        resolved = self._resolve_file_path(path_val)
+        try:
+            parent = os.path.dirname(resolved)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(resolved, "w", encoding="utf-8") as f:
+                f.write(str(content_val))
+        except Exception as e:
+            raise RuntimeError(f"WriteFile failed: {e}")
+        kind = "truth" if path_kind == "truth" and content_kind == "truth" else "grain"
+        return 1, kind
+
+    def _handle_append_file(self, call):
+        self._validate_arg_count(call, 2)
+        path_val, path_kind = self.eval(call.args[0])
+        content_val, content_kind = self.eval(call.args[1])
+        resolved = self._resolve_file_path(path_val)
+        try:
+            parent = os.path.dirname(resolved)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(resolved, "a", encoding="utf-8") as f:
+                f.write(str(content_val))
+        except Exception as e:
+            raise RuntimeError(f"AppendFile failed: {e}")
+        kind = "truth" if path_kind == "truth" and content_kind == "truth" else "grain"
+        return 1, kind
+
+    def _handle_file_exists(self, call):
+        self._validate_arg_count(call, 1)
+        path_val, path_kind = self.eval(call.args[0])
+        resolved = self._resolve_file_path(path_val)
+        return (1 if os.path.exists(resolved) else 0), path_kind
+
+    def _handle_delete_file(self, call):
+        self._validate_arg_count(call, 1)
+        path_val, path_kind = self.eval(call.args[0])
+        resolved = self._resolve_file_path(path_val)
+        try:
+            if os.path.exists(resolved):
+                os.remove(resolved)
+        except Exception as e:
+            raise RuntimeError(f"DeleteFile failed: {e}")
+        return 1, path_kind

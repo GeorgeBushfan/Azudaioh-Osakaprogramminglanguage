@@ -1,0 +1,6 @@
+// EXPECTED-DIAG: 1 warnings
+
+import "./modules/mod_values.saka" as mod;
+
+Say(mod.greeting());
+Say(mod.add2(2, 3));

@@ -213,7 +213,7 @@ Object-style math calls are supported:
 - `Math.cosh(x)`
 - `Math.tanh(x)`
 
-### 6.2) Module imports (`import std;`)
+### 6.2) Module imports
 
 Osaka supports importing the standard library module namespace:
 
@@ -226,11 +226,52 @@ std.push(nums, 3);
 Say(std.len(nums));
 ```
 
-Rules:
+`std` module rules:
 
 - `import std;` is currently the only supported module import.
 - Namespaced std calls supported: `std.len`, `std.keys`, `std.values`, `std.contains`, `std.slice`, `std.push`, `std.pop`.
 - `Say` remains a core builtin and is used as `Say(...)` (not `std.Say(...)`).
+
+### 6.3) File modules (`import "path" as alias;` + `export`)
+
+You can import local `.saka` files by path and alias:
+
+```saka
+import "./modules/mod_values.saka" as mod;
+
+Say(mod.greeting());
+Say(mod.answer());
+```
+
+And export values from a module file:
+
+```saka
+export truthaboutgrain greeting = "hello-module";
+export truthaboutgrain answer = 42;
+```
+
+Current limitations:
+
+- Exported **values** are supported in interpreter and VM.
+- Exported **functions** are now callable through file-module imports.
+- Imported value members are currently accessed in call-expression form (`mod.name()`) for value reads.
+
+### 6.4) File I/O built-ins (MVP)
+
+Osaka supports basic file operations:
+
+- `ReadFile(path)`
+- `WriteFile(path, content)`
+- `AppendFile(path, content)`
+- `FileExists(path)`
+- `DeleteFile(path)`
+
+Notes:
+
+- Paths resolve relative to the currently executing source file.
+- `WriteFile` and `AppendFile` create parent directories when needed.
+- `ReadFile` on a missing/unreadable path raises a runtime error.
+- `FileExists` returns `1` (exists) or `0` (missing).
 
 ### 7) Context progression statements
 
@@ -322,3 +363,13 @@ When changing language semantics:
 4. Add/adjust tests (especially `tests/equivalence/`).
 5. Re-check equivalence output before shipping.
 ````
+
+---
+
+## Release Notes
+
+### v1.1.0
+
+- Added file I/O built-ins: `ReadFile`, `WriteFile`, `AppendFile`, `FileExists`, `DeleteFile`.
+- Added file-module callable function imports (exported functions can now be called via aliases).
+- Expanded equivalence coverage with file module and file I/O tests.
