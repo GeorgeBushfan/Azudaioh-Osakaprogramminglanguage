@@ -355,6 +355,10 @@ class VM:
             truth_value = bool(val.data)
             return Value(truth_value, "truth")
 
+        if name == "__is_bool__":
+            val = args[0]
+            return Value(isinstance(val.data, bool), "truth")
+
         if name == "__is_float__":
             val = args[0]
             return Value(isinstance(val.data, float), "truth")

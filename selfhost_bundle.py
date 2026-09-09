@@ -20,6 +20,7 @@ DEFAULT_ORDER = (
     "verifier.saka",
     "emit_sbc.saka",
     "main.saka",
+    "vm.saka",
 )
 
 
