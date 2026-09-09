@@ -1,0 +1,1165 @@
+// Self-hosted SBC virtual machine: 1:1 port of Stage 0 vm.py.
+// Executes the canonical SBC1 document dict (as produced by compile_ir /
+// bc_program_to_dict / sbc.load). Because the bootstrap profile has no
+// exceptions, runtime failures are recorded in state["error"] and unwound
+// through the same try-handler algorithm Stage 0 implements with Python
+// exceptions.
+//
+// Values are [data, kind] pairs. Frames and VM state are tagged maps, so
+// container mutation aliasing matches Stage 0's Value/Frame objects.
+//
+// Reflection builtins (__json_type__, __is_bool__, __is_float__,
+// __float_repr__) and file I/O delegate to the OUTER VM's implementations:
+// this module runs as guest code on a host VM, and host builtins called
+// from inside it resolve to the host, not to this dispatcher. This is the
+// sanctioned host boundary; a native host (Gate E) implements the same
+// builtins natively.
+//
+// Instrumentation (execution traces) is intentionally a no-op: per
+// docs/SELF_HOSTING.md "Runtime equivalence", traces are not semantics.
+
+// ---------- state ----------
+
+func vm_new_state(argv) {
+    return {
+        "frames": [],
+        "scopes": [{}],
+        "functions": {},
+        "arities": vf_builtin_arities(),
+        "argv": argv,
+        "stdout": "",
+        "warnings": [],
+        "infos": [],
+        "error": 0,
+        "halted": 0,
+        "null": vm_make_null(),
+        "imports": {},
+        "current_file": 0,
+        "initialised": {},
+        "mutation_warned": {},
+        "acknowledged": {},
+        "assumed": {},
+        "legacy": {},
+        "completed": {},
+        "var_kinds": {},
+        "has_return": {}
+    };
+}
+
+// The profile has no null literal; the host's __push_scope__ returns the
+// host null value, so capture one and immediately balance the scope. The
+// null is written into a fresh guest pair via INDEX_SET so state["null"]
+// is a well-formed [None, "truth"] value.
+func vm_make_null() {
+    truthaboutgrain pair = [0, "truth"];
+    pair[0] = __push_scope__();
+    __pop_scope__();
+    return pair;
+}
+
+func vm_error(state, message) {
+    if Americaya(state["error"] == 0) {
+        state["error"] = {"code": "RUNTIME_ERROR", "message": message};
+    }
+}
+
+func vm_warn(state, message) {
+    push(state["warnings"], "[Warning] " + message);
+}
+
+func vm_info(state, message) {
+    push(state["infos"], "[Info] " + message);
+}
+
+func vm_truth_and(a, b) {
+    if Americaya(a == "truth" and b == "truth") { return "truth"; }
+    return "grain";
+}
+
+// ---------- text formatting (Python str()/repr() parity) ----------
+
+func vm_int_to_text(value) {
+    truthaboutgrain n = value;
+    if Americaya(n == 0) { return "0"; }
+    truthaboutgrain prefix = "";
+    if Americaya(n < 0) {
+        prefix = "-";
+        n = 0 - n;
+    }
+    truthaboutgrain digits = [];
+    while Americaya(n > 0) {
+        truthaboutgrain d = n % 10;
+        push(digits, slice("0123456789", d, d + 1));
+        truthaboutgrain q = 0;
+        while Americaya(n >= 10) {
+            n = n - 10;
+            q = q + 1;
+        }
+        n = q;
+    }
+    truthaboutgrain text = prefix;
+    truthaboutgrain i = len(digits);
+    while Americaya(i > 0) {
+        i = i - 1;
+        text = text + digits[i];
+    }
+    return text;
+}
+
+func vm_type_name(jt) {
+    // Matches Python type(x).__name__ text used in Stage 0 error messages.
+    if Americaya(jt == 0) { return "int"; }
+    if Americaya(jt == 1) { return "float"; }
+    if Americaya(jt == 2) { return "str"; }
+    if Americaya(jt == 3) { return "list"; }
+    if Americaya(jt == 4) { return "dict"; }
+    if Americaya(jt == 5) { return "bool"; }
+    return "NoneType";
+}
+
+// Python repr(x). Strings are quoted; containers recurse with repr.
+func vm_repr(state, data) {
+    truthaboutgrain jt = __json_type__(data);
+    if Americaya(jt == 2) {
+        return "'" + data + "'";
+    }
+    if Americaya(jt == 3) {
+        truthaboutgrain parts = [];
+        truthaboutgrain i = 0;
+        while Americaya(i < len(data)) {
+            push(parts, vm_repr(state, data[i]));
+            i = i + 1;
+        }
+        truthaboutgrain joined = "";
+        i = 0;
+        while Americaya(i < len(parts)) {
+            if Americaya(i > 0) { joined = joined + ", "; }
+            joined = joined + parts[i];
+            i = i + 1;
+        }
+        return "[" + joined + "]";
+    }
+    if Americaya(jt == 4) {
+        truthaboutgrain ks = Americaya(keys(data));
+        truthaboutgrain parts = [];
+        truthaboutgrain i = 0;
+        while Americaya(i < len(ks)) {
+            push(parts, vm_repr(state, ks[i]) + ": " + vm_repr(state, data[ks[i]]));
+            i = i + 1;
+        }
+        truthaboutgrain joined = "";
+        i = 0;
+        while Americaya(i < len(parts)) {
+            if Americaya(i > 0) { joined = joined + ", "; }
+            joined = joined + parts[i];
+            i = i + 1;
+        }
+        return "{" + joined + "}";
+    }
+    return vm_str(state, data);
+}
+
+// Python str(x). Top-level strings are bare; containers use repr form
+// (matching Stage 0's Say and f-string formatting).
+func vm_str(state, data) {
+    truthaboutgrain jt = __json_type__(data);
+    if Americaya(jt == 2) { return data; }
+    if Americaya(jt == 0) { return vm_int_to_text(data); }
+    if Americaya(jt == 1) { return __float_repr__(data); }
+    if Americaya(jt == 5) {
+        if Americaya(__is_bool__(data)) {
+            if Americaya(data) { return "True"; }
+            return "False";
+        }
+    }
+    if Americaya(jt == 6) { return "None"; }
+    if Americaya(jt == 3 or jt == 4) { return vm_repr(state, data); }
+    vm_error(state, "Say() unsupported value type");
+    return "";
+}
+
+// Python bool(data) as a host bool-typed value (== / != produce host bools).
+func vm_truthy_value(state, data) {
+    truthaboutgrain jt = __json_type__(data);
+    if Americaya(jt == 6) { return data == 1; }
+    if Americaya(jt == 2) { return data != ""; }
+    if Americaya(jt == 3 or jt == 4) { return len(data) > 0; }
+    return data != 0;
+}
+
+// ---------- frames ----------
+
+// The SBC1 document does not carry per-function locals (mirroring sbc.load):
+// derive them from the parameter list plus STORE_VAR/INDEX_SET targets.
+func vm_derive_locals(fn) {
+    truthaboutgrain locals = {};
+    truthaboutgrain params = Americaya(fn["params"]);
+    truthaboutgrain i = 0;
+    while Americaya(i < len(params)) {
+        locals[params[i]] = 0;
+        i = i + 1;
+    }
+    truthaboutgrain code = Americaya(fn["code"]);
+    i = 0;
+    while Americaya(i < len(code)) {
+        truthaboutgrain op = code[i]["op"];
+        if Americaya(op == "STORE_VAR" or op == "INDEX_SET") {
+            locals[code[i]["arg"]] = 0;
+        }
+        i = i + 1;
+    }
+    return locals;
+}
+
+func vm_new_frame(fn, functions, ret_ip, name) {
+    truthaboutgrain locals = vm_derive_locals(fn);
+    truthaboutgrain names = Americaya(keys(locals));
+    truthaboutgrain uninit = {"__vm_uninit__": 1};
+    truthaboutgrain i = 0;
+    while Americaya(i < len(names)) {
+        locals[names[i]] = [uninit, "grain"];
+        i = i + 1;
+    }
+    truthaboutgrain param_set = {};
+    truthaboutgrain params = Americaya(fn["params"]);
+    i = 0;
+    while Americaya(i < len(params)) {
+        param_set[params[i]] = 1;
+        i = i + 1;
+    }
+    return {
+        "code": fn["code"],
+        "consts": fn["constants"],
+        "functions": functions,
+        "ip": 0,
+        "ret_ip": ret_ip,
+        "locals": locals,
+        "params": param_set,
+        "stack": [],
+        "line": 0 - 1,
+        "try": [],
+        "scope_base": 0,
+        "name": name
+    };
+}
+
+// ---------- variables ----------
+
+func vm_get_var(state, frame, name) {
+    truthaboutgrain locals = frame["locals"];
+    if Americaya(contains(locals, name)) {
+        truthaboutgrain local = locals[name];
+        truthaboutgrain marker = local[0];
+        if Americaya(__json_type__(marker) == 4) {
+            if Americaya(not contains(marker, "__vm_uninit__")) {
+                return local;
+            }
+        } else {
+            return local;
+        }
+    }
+    truthaboutgrain scopes = state["scopes"];
+    truthaboutgrain i = len(scopes) - 1;
+    while Americaya(i >= 0) {
+        if Americaya(contains(scopes[i], name)) {
+            return scopes[i][name];
+        }
+        i = i - 1;
+    }
+    vm_warn(state, name + " used before assignment (defaulting to 0)");
+    return [0, "grain"];
+}
+
+func vm_store_var(state, frame, name, val) {
+    truthaboutgrain locals = frame["locals"];
+    if Americaya(contains(locals, name)) {
+        // Interpreter parity: parameters bind as grainsoftruth on first
+        // store, detected via the pre-seeded sentinel placeholder.
+        truthaboutgrain existing = locals[name];
+        truthaboutgrain marker = existing[0];
+        truthaboutgrain is_uninit = 0;
+        if Americaya(__json_type__(marker) == 4) {
+            if Americaya(contains(marker, "__vm_uninit__")) {
+                is_uninit = 1;
+            }
+        }
+        if Americaya(is_uninit == 1 and contains(frame["params"], name)) {
+            val = [val[0], "grain"];
+        }
+        // Function locals never participate in mutation-policy bookkeeping.
+        locals[name] = val;
+        return 0;
+    }
+    truthaboutgrain scopes = state["scopes"];
+    truthaboutgrain target = 0;
+    truthaboutgrain i = len(scopes) - 1;
+    while Americaya(i >= 0) {
+        if Americaya(contains(scopes[i], name)) {
+            target = scopes[i];
+            break;
+        }
+        i = i - 1;
+    }
+    if Americaya(target == 0) {
+        target = scopes[len(scopes) - 1];
+    }
+    if Americaya(contains(state["legacy"], name)) {
+        vm_warn(state, name + " is Ivebeengot (legacy) and cannot be reassigned");
+        return 0;
+    }
+    if Americaya(contains(state["completed"], name)) {
+        vm_warn(state, name + " is Hecho and cannot be modified");
+        return 0;
+    }
+    if Americaya(contains(state["initialised"], name)) {
+        if Americaya(not contains(state["acknowledged"], name) and not contains(state["assumed"], name)) {
+            if Americaya(not contains(state["mutation_warned"], name)) {
+                vm_warn(state, name + " mutated without Ah()");
+                truthaboutgrain mutation_warned_map = state["mutation_warned"];
+                mutation_warned_map[name] = 1;
+            }
+        }
+    }
+    target[name] = val;
+    truthaboutgrain initialised_map = state["initialised"];
+    initialised_map[name] = 1;
+    truthaboutgrain var_kinds_map = state["var_kinds"];
+    var_kinds_map[name] = val[1];
+}
+
+func vm_index_set(state, base_name, container, index, newval) {
+    if Americaya(contains(state["legacy"], base_name)) {
+        vm_warn(state, base_name + " is Ivebeengot (legacy) and cannot be modified");
+        return 0;
+    }
+    if Americaya(contains(state["completed"], base_name)) {
+        vm_warn(state, base_name + " is Hecho and cannot be modified");
+        return 0;
+    }
+    if Americaya(contains(state["initialised"], base_name)) {
+        if Americaya(not contains(state["acknowledged"], base_name) and not contains(state["assumed"], base_name)) {
+            if Americaya(not contains(state["mutation_warned"], base_name)) {
+                vm_warn(state, base_name + " mutated without Ah()");
+                truthaboutgrain mutation_warned_map = state["mutation_warned"];
+                mutation_warned_map[base_name] = 1;
+            }
+        }
+    }
+    truthaboutgrain data = container[0];
+    truthaboutgrain jc = __json_type__(data);
+    if Americaya(jc == 3) {
+        truthaboutgrain ji = __json_type__(index[0]);
+        if Americaya(ji != 0 and ji != 5) {
+            vm_error(state, "Invalid map/list assignment");
+            return 0;
+        }
+        if Americaya(index[0] < 0) {
+            vm_error(state, "Invalid list assignment: Negative indices not supported");
+            return 0;
+        }
+        while Americaya(index[0] >= len(data)) {
+            push(data, state["null"][0]);
+        }
+        data[index[0]] = newval[0];
+    } else {
+        if Americaya(jc == 4) {
+            // Python dict assignment accepts new keys; only unhashable keys
+            // raise (generic "Invalid map/list assignment").
+            truthaboutgrain ji = __json_type__(index[0]);
+            if Americaya(ji == 3 or ji == 4) {
+                vm_error(state, "Invalid map/list assignment");
+                return 0;
+            }
+            data[index[0]] = newval[0];
+        } else {
+            vm_error(state, "Invalid map/list assignment");
+            return 0;
+        }
+    }
+    if Americaya(newval[1] == "grain") {
+        truthaboutgrain var_kinds_map = state["var_kinds"];
+        var_kinds_map[base_name] = "grain";
+    }
+    truthaboutgrain initialised_map = state["initialised"];
+    initialised_map[base_name] = 1;
+}
+
+// ---------- builtins ----------
+
+func vm_line_of(state) {
+    truthaboutgrain frames = state["frames"];
+    if Americaya(len(frames) > 0) {
+        return frames[len(frames) - 1]["line"];
+    }
+    return 0;
+}
+
+func vm_call_builtin(state, frame, name, args) {
+    truthaboutgrain arities = state["arities"];
+    if Americaya(not contains(arities, name)) {
+        vm_error(state, "Unknown built-in " + name);
+        return state["null"];
+    }
+    if Americaya(len(args) != arities[name]) {
+        vm_error(state, name + "() expects " + vm_int_to_text(arities[name]) + " arguments, got " + vm_int_to_text(len(args)));
+        return state["null"];
+    }
+
+    // std.* aliases require the import marker, then dispatch to the member.
+    truthaboutgrain resolved = name;
+    if Americaya(len(name) > 4) {
+        if Americaya(slice(name, 0, 4) == "std.") {
+            if Americaya(not contains(state["imports"], "std")) {
+                vm_error(state, "std module not imported (use 'import std;')");
+                return state["null"];
+            }
+            if Americaya(slice(name, 0, 8) == "std.len") { resolved = "len"; }
+            if Americaya(slice(name, 0, 9) == "std.keys") { resolved = "keys"; }
+            if Americaya(slice(name, 0, 10) == "std.values") { resolved = "values"; }
+            if Americaya(slice(name, 0, 12) == "std.contains") { resolved = "contains"; }
+            if Americaya(slice(name, 0, 10) == "std.slice") { resolved = "slice"; }
+            if Americaya(slice(name, 0, 9) == "std.push") { resolved = "push"; }
+            if Americaya(slice(name, 0, 8) == "std.pop") { resolved = "pop"; }
+        }
+    }
+
+    if Americaya(resolved == "__import_module__") {
+        truthaboutgrain module = args[0][0];
+        if Americaya(module != "std") {
+            vm_error(state, "Unknown module " + vm_str(state, module));
+            return state["null"];
+        }
+        truthaboutgrain imports_map = state["imports"];
+        imports_map["std"] = 1;
+        return state["null"];
+    }
+    if Americaya(resolved == "__import_file_module__") {
+        vm_error(state, "module system not supported by the self-hosted VM yet");
+        return state["null"];
+    }
+    if Americaya(resolved == "__export_symbol__") {
+        vm_error(state, "export can only be used inside module files");
+        return state["null"];
+    }
+
+    if Americaya(resolved == "__force_kind_grain__") {
+        truthaboutgrain target_value = args[0];
+        target_value[1] = "grain";
+        return target_value;
+    }
+    if Americaya(resolved == "__force_kind_truth__") {
+        truthaboutgrain target_value = args[0];
+        target_value[1] = "truth";
+        return target_value;
+    }
+    if Americaya(resolved == "__capture_trace__" or resolved == "TRACE") {
+        return state["null"];
+    }
+    if Americaya(resolved == "__to_truthaboutgrain__") {
+        return [vm_truthy_value(state, args[0][0]), "truth"];
+    }
+    if Americaya(resolved == "__is_bool__") {
+        return [__is_bool__(args[0][0]), "truth"];
+    }
+    if Americaya(resolved == "__is_float__") {
+        return [__is_float__(args[0][0]), "truth"];
+    }
+    if Americaya(resolved == "__json_type__") {
+        return [__json_type__(args[0][0]), "truth"];
+    }
+    if Americaya(resolved == "__float_repr__") {
+        return [__float_repr__(args[0][0]), "truth"];
+    }
+    if Americaya(resolved == "__to_bool_preserve_kind__") {
+        return [vm_truthy_value(state, args[0][0]), args[0][1]];
+    }
+    if Americaya(resolved == "__bool_not__") {
+        return [not vm_truthy_value(state, args[0][0]), args[0][1]];
+    }
+    if Americaya(resolved == "__bool_and__") {
+        truthaboutgrain kind = vm_truth_and(args[0][1], args[1][1]);
+        truthaboutgrain left = vm_truthy_value(state, args[0][0]);
+        truthaboutgrain result = 0;
+        if Americaya(left) {
+            result = vm_truthy_value(state, args[1][0]);
+        }
+        return [result, kind];
+    }
+    if Americaya(resolved == "__bool_or__") {
+        truthaboutgrain kind = vm_truth_and(args[0][1], args[1][1]);
+        truthaboutgrain left = vm_truthy_value(state, args[0][0]);
+        truthaboutgrain result = left;
+        if Americaya(not left) {
+            result = vm_truthy_value(state, args[1][0]);
+        }
+        return [result, kind];
+    }
+    if Americaya(resolved == "__push_scope__") {
+        push(state["scopes"], {});
+        return state["null"];
+    }
+    if Americaya(resolved == "__pop_scope__") {
+        if Americaya(len(state["scopes"]) > 1) {
+            state["scopes"] = slice(state["scopes"], 0, len(state["scopes"]) - 1);
+        }
+        return state["null"];
+    }
+
+    if Americaya(resolved == "SataAndagi") {
+        truthaboutgrain info = {
+            "name": "SATA",
+            "version": "1.0",
+            "context": 0,
+            "warnings": 0
+        };
+        vm_info(state, "SataAndagi: runtime booted");
+        return [info, "truth"];
+    }
+    if Americaya(resolved == "Americaya") {
+        if Americaya(args[0][1] == "grain") {
+            vm_info(state, "Americaya: promoted grainsoftruth to truthaboutgrain");
+        }
+        return [args[0][0], "truth"];
+    }
+    if Americaya(resolved == "Getittogether") {
+        return state["null"];
+    }
+    if Americaya(resolved == "Ohmygah") {
+        vm_warn(state, "Ohmygah triggered on " + vm_str(state, args[0][0]) + " (non-fatal)");
+        return state["null"];
+    }
+
+    if Americaya(resolved == "Args") {
+        return [state["argv"], "truth"];
+    }
+    if Americaya(resolved == "Panic") {
+        vm_error(state, "Panic: " + vm_str(state, args[0][0]));
+        return state["null"];
+    }
+    if Americaya(resolved == "Say") {
+        if Americaya(args[0][1] == "grain") {
+            vm_warn(state, "Line " + vm_int_to_text(vm_line_of(state)) + ": Say() used on grainsoftruth (output may be unreliable)");
+        }
+        truthaboutgrain data = args[0][0];
+        truthaboutgrain jt = __json_type__(data);
+        truthaboutgrain text = "";
+        if Americaya(jt == 3) {
+            truthaboutgrain parts = [];
+            truthaboutgrain i = 0;
+            while Americaya(i < len(data)) {
+                push(parts, vm_str(state, data[i]));
+                i = i + 1;
+            }
+            truthaboutgrain joined = "";
+            i = 0;
+            while Americaya(i < len(parts)) {
+                if Americaya(i > 0) { joined = joined + ", "; }
+                joined = joined + parts[i];
+                i = i + 1;
+            }
+            text = "[" + joined + "]";
+        } else {
+            if Americaya(jt == 4) {
+                truthaboutgrain ks = Americaya(keys(data));
+                truthaboutgrain parts = [];
+                truthaboutgrain i = 0;
+                while Americaya(i < len(ks)) {
+                    push(parts, vm_str(state, ks[i]) + ": " + vm_str(state, data[ks[i]]));
+                    i = i + 1;
+                }
+                truthaboutgrain joined = "";
+                i = 0;
+                while Americaya(i < len(parts)) {
+                    if Americaya(i > 0) { joined = joined + ", "; }
+                    joined = joined + parts[i];
+                    i = i + 1;
+                }
+                text = "{" + joined + "}";
+            } else {
+                text = vm_str(state, data);
+            }
+        }
+        state["stdout"] = state["stdout"] + text + "\n";
+        return state["null"];
+    }
+
+    if Americaya(resolved == "len") {
+        truthaboutgrain jt = __json_type__(args[0][0]);
+        if Americaya(jt != 2 and jt != 3 and jt != 4) {
+            vm_error(state, "len() unsupported type");
+            return state["null"];
+        }
+        return [len(args[0][0]), args[0][1]];
+    }
+    if Americaya(resolved == "ReadFile" or resolved == "WriteFile"
+        or resolved == "AppendFile" or resolved == "FileExists"
+        or resolved == "DeleteFile") {
+        // File I/O delegates to the host VM. Host path resolution starts
+        // from the process cwd unless rt.current_file is set; the self-hosted
+        // VM keeps module-relative resolution for D2 (module loading).
+        if Americaya(resolved == "ReadFile") {
+            truthaboutgrain content = ReadFile(args[0][0]);
+            return [content, args[0][1]];
+        }
+        if Americaya(resolved == "WriteFile") {
+            WriteFile(args[0][0], vm_str(state, args[1][0]));
+            return [1, vm_truth_and(args[0][1], args[1][1])];
+        }
+        if Americaya(resolved == "AppendFile") {
+            AppendFile(args[0][0], vm_str(state, args[1][0]));
+            return [1, vm_truth_and(args[0][1], args[1][1])];
+        }
+        if Americaya(resolved == "FileExists") {
+            return [FileExists(args[0][0]), args[0][1]];
+        }
+        DeleteFile(args[0][0]);
+        return [1, args[0][1]];
+    }
+    if Americaya(resolved == "keys") {
+        if Americaya(__json_type__(args[0][0]) != 4) {
+            vm_error(state, "keys() requires map");
+            return state["null"];
+        }
+        return [keys(args[0][0]), args[0][1]];
+    }
+    if Americaya(resolved == "values") {
+        if Americaya(__json_type__(args[0][0]) != 4) {
+            vm_error(state, "values() requires map");
+            return state["null"];
+        }
+        return [values(args[0][0]), args[0][1]];
+    }
+    if Americaya(resolved == "contains") {
+        if Americaya(__json_type__(args[0][0]) != 4) {
+            vm_error(state, "contains() requires map");
+            return state["null"];
+        }
+        truthaboutgrain kind = vm_truth_and(args[0][1], args[1][1]);
+        return [contains(args[0][0], args[1][0]), kind];
+    }
+    if Americaya(resolved == "slice") {
+        truthaboutgrain data = args[0][0];
+        truthaboutgrain jt = __json_type__(data);
+        if Americaya(jt != 2 and jt != 3) {
+            vm_error(state, "slice() requires list or string");
+            return state["null"];
+        }
+        truthaboutgrain kind = "grain";
+        if Americaya(args[0][1] == "truth" and args[1][1] == "truth" and args[2][1] == "truth") {
+            kind = "truth";
+        }
+        return [slice(data, args[1][0], args[2][0]), kind];
+    }
+
+    if Americaya(slice(resolved, 0, 5) == "Math.") {
+        // The bootstrap profile forbids namespaced calls, so this dispatcher
+        // cannot delegate Math.* to the host like the reflection builtins.
+        // Not needed for the compiler fixed point (the bundle never calls
+        // Math); revisit for the full conformance corpus in Gate D step D2.
+        vm_error(state, "Math object is not supported by the self-hosted VM yet");
+        return state["null"];
+    }
+
+    if Americaya(resolved == "push") {
+        truthaboutgrain lst = args[0];
+        if Americaya(__json_type__(lst[0]) != 3) {
+            vm_error(state, "Line " + vm_int_to_text(vm_line_of(state)) + ": push() requires list");
+            return state["null"];
+        }
+        push(lst[0], args[1][0]);
+        if Americaya(lst[1] == "grain" or args[1][1] == "grain") {
+            lst[1] = "grain";
+        } else {
+            lst[1] = "truth";
+        }
+        return state["null"];
+    }
+    if Americaya(resolved == "pop") {
+        truthaboutgrain lst = args[0];
+        if Americaya(__json_type__(lst[0]) != 3) {
+            vm_error(state, "Line " + vm_int_to_text(vm_line_of(state)) + ": pop() requires list");
+            return state["null"];
+        }
+        if Americaya(len(lst[0]) == 0) {
+            vm_error(state, "Line " + vm_int_to_text(vm_line_of(state)) + ": pop() on empty list");
+            return state["null"];
+        }
+        truthaboutgrain last = lst[0][len(lst[0]) - 1];
+        lst[0] = slice(lst[0], 0, len(lst[0]) - 1);
+        return [last, lst[1]];
+    }
+
+    if Americaya(resolved == "Ah" or resolved == "Hecho"
+        or resolved == "youknowsealsright" or resolved == "Ivebeengot") {
+        truthaboutgrain var_name = args[0][0];
+        if Americaya(__json_type__(var_name) != 2) {
+            vm_error(state, name + " requires variable name");
+            return state["null"];
+        }
+        truthaboutgrain line = vm_line_of(state);
+        if Americaya(resolved == "Ah") {
+            truthaboutgrain acknowledged_map = state["acknowledged"];
+            acknowledged_map[var_name] = 1;
+            vm_info(state, "Line " + vm_int_to_text(line) + ": " + var_name + " acknowledged");
+            return state["null"];
+        }
+        if Americaya(resolved == "Hecho") {
+            if Americaya(contains(state["var_kinds"], var_name)) {
+                if Americaya(state["var_kinds"][var_name] == "grain") {
+                    vm_info(state, "[Advisory] Line " + vm_int_to_text(line) + ": Cannot Hecho grainsoftruth variable " + var_name + "; promote to truthaboutgrain first");
+                    return state["null"];
+                }
+            }
+            truthaboutgrain completed_map = state["completed"];
+            completed_map[var_name] = 1;
+            vm_info(state, "Line " + vm_int_to_text(line) + ": " + var_name + " marked as Hecho (frozen)");
+            return state["null"];
+        }
+        if Americaya(resolved == "youknowsealsright") {
+            truthaboutgrain assumed_map = state["assumed"];
+            assumed_map[var_name] = 1;
+            vm_info(state, "Line " + vm_int_to_text(line) + ": " + var_name + " marked as assumed (youknowsealsright)");
+            return state["null"];
+        }
+        truthaboutgrain legacy_map = state["legacy"];
+        legacy_map[var_name] = 1;
+        vm_info(state, "Line " + vm_int_to_text(line) + ": " + var_name + " marked as Ivebeengot (legacy)");
+        return state["null"];
+    }
+
+    if Americaya(resolved == "add") {
+        truthaboutgrain ja = __json_type__(args[1][0]);
+        truthaboutgrain jb = __json_type__(args[0][0]);
+        truthaboutgrain numeric_a = 0;
+        if Americaya(ja == 0 or ja == 1 or ja == 5) { numeric_a = 1; }
+        truthaboutgrain numeric_b = 0;
+        if Americaya(jb == 0 or jb == 1 or jb == 5) { numeric_b = 1; }
+        if Americaya(numeric_a == 0 or numeric_b == 0) {
+            vm_error(state, "ADD operation unsupported for types: " + vm_type_name(ja) + " and " + vm_type_name(jb));
+            return state["null"];
+        }
+        truthaboutgrain kind = vm_truth_and(args[1][1], args[0][1]);
+        return [args[1][0] + args[0][0], kind];
+    }
+
+    vm_error(state, "Unknown builtin " + name);
+    return state["null"];
+}
+
+// ---------- numeric binary helpers ----------
+
+func vm_is_numeric(jt) {
+    if Americaya(jt == 0 or jt == 1 or jt == 5) { return 1; }
+    return 0;
+}
+
+// ---------- try-handler unwind (port of Stage 0's except block) ----------
+
+// Returns 1 when a handler caught the error (error state is cleared and
+// execution resumes at the catch IP); 0 when the error is unhandled.
+func vm_unwind(state) {
+    truthaboutgrain frames = state["frames"];
+    while Americaya(len(frames) > 0) {
+        truthaboutgrain top = frames[len(frames) - 1];
+        if Americaya(len(top["try"]) > 0) {
+            truthaboutgrain handler = top["try"][len(top["try"]) - 1];
+            top["try"] = slice(top["try"], 0, len(top["try"]) - 1);
+            while Americaya(len(state["scopes"]) > handler[1]) {
+                state["scopes"] = slice(state["scopes"], 0, len(state["scopes"]) - 1);
+            }
+            top["stack"] = slice(top["stack"], 0, handler[2]);
+            top["ip"] = handler[0];
+            state["error"] = 0;
+            return 1;
+        }
+        while Americaya(len(state["scopes"]) > top["scope_base"]) {
+            state["scopes"] = slice(state["scopes"], 0, len(state["scopes"]) - 1);
+        }
+        frames = slice(frames, 0, len(frames) - 1);
+        state["frames"] = frames;
+    }
+    return 0;
+}
+
+// ---------- single instruction step ----------
+
+func vm_step(state) {
+    truthaboutgrain frames = state["frames"];
+    truthaboutgrain frame = frames[len(frames) - 1];
+    truthaboutgrain code = frame["code"];
+
+    if Americaya(frame["ip"] >= len(code)) {
+        // Frame finished: return top-of-stack value (or null) to caller.
+        truthaboutgrain ret = state["null"];
+        if Americaya(len(frame["stack"]) > 0) {
+            ret = frame["stack"][len(frame["stack"]) - 1];
+            frame["stack"] = slice(frame["stack"], 0, len(frame["stack"]) - 1);
+        }
+        state["frames"] = slice(frames, 0, len(frames) - 1);
+        if Americaya(len(state["frames"]) > 0) {
+            push(state["frames"][len(state["frames"]) - 1]["stack"], ret);
+        }
+        return 0;
+    }
+
+    truthaboutgrain instr = code[frame["ip"]];
+    frame["line"] = instr["line"];
+    frame["ip"] = frame["ip"] + 1;
+    truthaboutgrain op = instr["op"];
+    truthaboutgrain arg = instr["arg"];
+    truthaboutgrain stack = frame["stack"];
+
+    if Americaya(op == "PUSH_CONST") {
+        truthaboutgrain const_val = frame["consts"][arg];
+        push(stack, [const_val["data"], const_val["kind"]]);
+        return 0;
+    }
+    if Americaya(op == "LOAD_VAR") {
+        push(stack, vm_get_var(state, frame, arg));
+        return 0;
+    }
+    if Americaya(op == "STORE_VAR") {
+        truthaboutgrain v = stack[len(stack) - 1];
+        frame["stack"] = slice(stack, 0, len(stack) - 1);
+        vm_store_var(state, frame, arg, v);
+        return 0;
+    }
+    if Americaya(op == "DUP") {
+        if Americaya(len(stack) == 0) {
+            vm_error(state, "DUP on empty stack");
+            return 0;
+        }
+        truthaboutgrain top = stack[len(stack) - 1];
+        push(stack, [top[0], top[1]]);
+        return 0;
+    }
+    if Americaya(op == "POP") {
+        if Americaya(len(stack) == 0) {
+            vm_error(state, "POP on empty stack");
+            return 0;
+        }
+        frame["stack"] = slice(stack, 0, len(stack) - 1);
+        return 0;
+    }
+    if Americaya(op == "ADD" or op == "SUB" or op == "MUL" or op == "DIV" or op == "MOD") {
+        truthaboutgrain b = stack[len(stack) - 1];
+        truthaboutgrain a = stack[len(stack) - 2];
+        frame["stack"] = slice(stack, 0, len(stack) - 2);
+        truthaboutgrain ja = __json_type__(a[0]);
+        truthaboutgrain jb = __json_type__(b[0]);
+        if Americaya(op == "ADD") {
+            if Americaya(vm_is_numeric(ja) == 1 and vm_is_numeric(jb) == 1) {
+                push(frame["stack"], [a[0] + b[0], vm_truth_and(a[1], b[1])]);
+                return 0;
+            }
+            if Americaya(ja == 2 and jb == 2) {
+                push(frame["stack"], [a[0] + b[0], vm_truth_and(a[1], b[1])]);
+                return 0;
+            }
+            vm_error(state, "ADD operation unsupported for types: " + vm_type_name(ja) + " and " + vm_type_name(jb));
+            return 0;
+        }
+        if Americaya(vm_is_numeric(ja) == 0 or vm_is_numeric(jb) == 0) {
+            vm_error(state, op + " operation requires numeric operands");
+            return 0;
+        }
+        if Americaya(op == "SUB") {
+            push(frame["stack"], [a[0] - b[0], vm_truth_and(a[1], b[1])]);
+            return 0;
+        }
+        if Americaya(op == "MUL") {
+            push(frame["stack"], [a[0] * b[0], vm_truth_and(a[1], b[1])]);
+            return 0;
+        }
+        if Americaya(b[0] == 0) {
+            if Americaya(op == "DIV") {
+                vm_error(state, "division by zero");
+                return 0;
+            }
+            vm_error(state, "modulo by zero");
+            return 0;
+        }
+        if Americaya(op == "DIV") {
+            push(frame["stack"], [a[0] / b[0], vm_truth_and(a[1], b[1])]);
+            return 0;
+        }
+        push(frame["stack"], [a[0] % b[0], vm_truth_and(a[1], b[1])]);
+        return 0;
+    }
+    if Americaya(op == "MAKE_LIST") {
+        truthaboutgrain items = [];
+        truthaboutgrain i = 0;
+        while Americaya(i < arg) {
+            push(items, stack[len(stack) - 1 - i]);
+            i = i + 1;
+        }
+        frame["stack"] = slice(stack, 0, len(stack) - arg);
+        truthaboutgrain data = [];
+        truthaboutgrain all_truth = 1;
+        truthaboutgrain j = len(items) - 1;
+        while Americaya(j >= 0) {
+            push(data, items[j][0]);
+            if Americaya(items[j][1] != "truth") { all_truth = 0; }
+            j = j - 1;
+        }
+        truthaboutgrain kind = "grain";
+        if Americaya(all_truth == 1) { kind = "truth"; }
+        push(frame["stack"], [data, kind]);
+        return 0;
+    }
+    if Americaya(op == "MAKE_MAP") {
+        truthaboutgrain pairs = [];
+        truthaboutgrain i = 0;
+        while Americaya(i < arg) {
+            truthaboutgrain val = stack[len(stack) - 1 - 2 * i];
+            truthaboutgrain key = stack[len(stack) - 2 - 2 * i];
+            push(pairs, [key, val]);
+            i = i + 1;
+        }
+        frame["stack"] = slice(stack, 0, len(stack) - 2 * arg);
+        truthaboutgrain d = {};
+        truthaboutgrain all_truth = 1;
+        truthaboutgrain j = len(pairs) - 1;
+        while Americaya(j >= 0) {
+            d[pairs[j][0][0]] = pairs[j][1][0];
+            if Americaya(pairs[j][1][1] != "truth") { all_truth = 0; }
+            j = j - 1;
+        }
+        truthaboutgrain kind = "grain";
+        if Americaya(all_truth == 1) { kind = "truth"; }
+        push(frame["stack"], [d, kind]);
+        return 0;
+    }
+    if Americaya(op == "INDEX_GET") {
+        truthaboutgrain idx = stack[len(stack) - 1];
+        truthaboutgrain cont = stack[len(stack) - 2];
+        frame["stack"] = slice(stack, 0, len(stack) - 2);
+        truthaboutgrain data = cont[0];
+        truthaboutgrain jc = __json_type__(data);
+        if Americaya(jc == 3 or jc == 2) {
+            truthaboutgrain ji = __json_type__(idx[0]);
+            if Americaya((ji == 0 or ji == 5) and idx[0] >= 0 and idx[0] < len(data)) {
+                push(frame["stack"], [data[idx[0]], cont[1]]);
+                return 0;
+            }
+            vm_error(state, "Invalid map/list access");
+            return 0;
+        }
+        if Americaya(jc == 4) {
+            if Americaya(contains(data, idx[0])) {
+                push(frame["stack"], [data[idx[0]], cont[1]]);
+                return 0;
+            }
+            vm_error(state, "Invalid map/list access");
+            return 0;
+        }
+        vm_error(state, "Invalid map/list access");
+        return 0;
+    }
+    if Americaya(op == "INDEX_SET") {
+        truthaboutgrain newv = stack[len(stack) - 1];
+        truthaboutgrain idx = stack[len(stack) - 2];
+        truthaboutgrain cont = stack[len(stack) - 3];
+        frame["stack"] = slice(stack, 0, len(stack) - 3);
+        vm_index_set(state, arg, cont, idx, newv);
+        return 0;
+    }
+    if Americaya(op == "CALL_BUILTIN") {
+        truthaboutgrain argc = arg[1];
+        truthaboutgrain call_args = [];
+        truthaboutgrain i = 0;
+        while Americaya(i < argc) {
+            push(call_args, stack[len(stack) - 1 - i]);
+            i = i + 1;
+        }
+        frame["stack"] = slice(stack, 0, len(stack) - argc);
+        truthaboutgrain ordered = [];
+        truthaboutgrain j = argc - 1;
+        while Americaya(j >= 0) {
+            push(ordered, call_args[j]);
+            j = j - 1;
+        }
+        push(frame["stack"], vm_call_builtin(state, frame, arg[0], ordered));
+        return 0;
+    }
+    if Americaya(op == "CMP_EQ" or op == "CMP_NE" or op == "CMP_LT"
+        or op == "CMP_LE" or op == "CMP_GT" or op == "CMP_GE") {
+        truthaboutgrain b = stack[len(stack) - 1];
+        truthaboutgrain a = stack[len(stack) - 2];
+        frame["stack"] = slice(stack, 0, len(stack) - 2);
+        truthaboutgrain kind = vm_truth_and(a[1], b[1]);
+        if Americaya(op == "CMP_EQ") {
+            push(frame["stack"], [a[0] == b[0], kind]);
+            return 0;
+        }
+        if Americaya(op == "CMP_NE") {
+            push(frame["stack"], [a[0] != b[0], kind]);
+            return 0;
+        }
+        // Ordered comparisons only support like types (numeric/numeric,
+        // string/string, list/list) on the host; anything else raises.
+        truthaboutgrain ja = __json_type__(a[0]);
+        truthaboutgrain jb = __json_type__(b[0]);
+        truthaboutgrain compatible = 0;
+        if Americaya(vm_is_numeric(ja) == 1 and vm_is_numeric(jb) == 1) { compatible = 1; }
+        if Americaya(ja == 2 and jb == 2) { compatible = 1; }
+        if Americaya(ja == 3 and jb == 3) { compatible = 1; }
+        if Americaya(compatible == 0) {
+            vm_error(state, "'<', '<=', '>', '>=' not supported between instances of '" + vm_type_name(ja) + "' and '" + vm_type_name(jb) + "'");
+            return 0;
+        }
+        if Americaya(op == "CMP_LT") {
+            push(frame["stack"], [a[0] < b[0], kind]);
+            return 0;
+        }
+        if Americaya(op == "CMP_LE") {
+            push(frame["stack"], [a[0] <= b[0], kind]);
+            return 0;
+        }
+        if Americaya(op == "CMP_GT") {
+            push(frame["stack"], [a[0] > b[0], kind]);
+            return 0;
+        }
+        push(frame["stack"], [a[0] >= b[0], kind]);
+        return 0;
+    }
+    if Americaya(op == "JMP") {
+        frame["ip"] = arg;
+        return 0;
+    }
+    if Americaya(op == "JMP_IF_FALSE") {
+        truthaboutgrain cond = stack[len(stack) - 1];
+        frame["stack"] = slice(stack, 0, len(stack) - 1);
+        if Americaya(cond[1] != "truth") {
+            vm_error(state, "Control flow condition must be truthaboutgrain (function=" + frame["name"] + ", line=" + vm_int_to_text(instr["line"]) + ", value=" + vm_repr(state, cond[0]) + ")");
+            return 0;
+        }
+        if Americaya(not cond[0]) {
+            frame["ip"] = arg;
+        }
+        return 0;
+    }
+    if Americaya(op == "CALL_FUNC") {
+        truthaboutgrain fname = arg[0];
+        truthaboutgrain argc = arg[1];
+        truthaboutgrain functions = frame["functions"];
+        if Americaya(not contains(functions, fname)) {
+            vm_error(state, "Undefined function '" + fname + "'");
+            return 0;
+        }
+        truthaboutgrain fn = functions[fname];
+        if Americaya(len(stack) < argc) {
+            vm_error(state, "Function '" + fname + "' expects " + vm_int_to_text(len(fn["params"])) + " arguments, but only " + vm_int_to_text(len(stack)) + " available");
+            return 0;
+        }
+        if Americaya(not contains(state["has_return"], fname)) {
+            truthaboutgrain fcode = fn["code"];
+            truthaboutgrain has = 0;
+            truthaboutgrain i = 0;
+            while Americaya(i < len(fcode)) {
+                if Americaya(fcode[i]["op"] == "RET") { has = 1; }
+                i = i + 1;
+            }
+            if Americaya(has == 0) {
+                vm_error(state, "Function " + fname + " missing return");
+                return 0;
+            }
+            truthaboutgrain has_return_map = state["has_return"];
+            has_return_map[fname] = 1;
+        }
+        truthaboutgrain call_args = [];
+        truthaboutgrain i = 0;
+        while Americaya(i < argc) {
+            push(call_args, stack[len(stack) - 1 - i]);
+            i = i + 1;
+        }
+        frame["stack"] = slice(stack, 0, len(stack) - argc);
+        truthaboutgrain newf = vm_new_frame(fn, functions, frame["ip"], fname);
+        truthaboutgrain j = argc - 1;
+        while Americaya(j >= 0) {
+            push(newf["stack"], call_args[j]);
+            j = j - 1;
+        }
+        newf["scope_base"] = len(state["scopes"]);
+        push(state["frames"], newf);
+        return 0;
+    }
+    if Americaya(op == "RET") {
+        truthaboutgrain ret = state["null"];
+        if Americaya(len(stack) > 0) {
+            ret = stack[len(stack) - 1];
+        }
+        while Americaya(len(state["scopes"]) > frame["scope_base"]) {
+            state["scopes"] = slice(state["scopes"], 0, len(state["scopes"]) - 1);
+        }
+        state["frames"] = slice(state["frames"], 0, len(state["frames"]) - 1);
+        if Americaya(len(state["frames"]) > 0) {
+            push(state["frames"][len(state["frames"]) - 1]["stack"], ret);
+        }
+        return 0;
+    }
+    if Americaya(op == "TRACE_POINT") {
+        return 0;
+    }
+    if Americaya(op == "TRY_PUSH") {
+        push(frame["try"], [arg, len(state["scopes"]), len(stack)]);
+        return 0;
+    }
+    if Americaya(op == "TRY_POP") {
+        if Americaya(len(frame["try"]) > 0) {
+            frame["try"] = slice(frame["try"], 0, len(frame["try"]) - 1);
+        }
+        return 0;
+    }
+    if Americaya(op == "HALT") {
+        state["halted"] = 1;
+        return 0;
+    }
+    vm_error(state, "Unknown opcode " + op);
+}
+
+// ---------- entry point ----------
+
+// Run an SBC1 document. Returns
+// {"ok": 1, "value": {"stdout", "warnings"}, "diagnostic": 0} on success or
+// {"ok": 0, "value": 0, "diagnostic": {"code", "message"}} on an unhandled
+// runtime error (message text matches Stage 0's RuntimeError strings).
+func vm_run(document, argv) {
+    truthaboutgrain source = Americaya(document);
+    truthaboutgrain state = vm_new_state(argv);
+    state["functions"] = source["functions"];
+
+    truthaboutgrain entry = {
+        "code": source["main"],
+        "consts": source["constants"],
+        "functions": source["functions"],
+        "ip": 0,
+        "ret_ip": 0 - 1,
+        "locals": {},
+        "params": {},
+        "stack": [],
+        "line": 0 - 1,
+        "try": [],
+        "scope_base": 1,
+        "name": "main"
+    };
+    push(state["frames"], entry);
+
+    while Americaya(len(state["frames"]) > 0) {
+        if Americaya(state["halted"] == 1) { break; }
+        if Americaya(state["error"] != 0) {
+            if Americaya(vm_unwind(state) == 0) { break; }
+            continue;
+        }
+        vm_step(state);
+    }
+
+    if Americaya(state["error"] != 0) {
+        return {
+            "ok": 0,
+            "value": {"stdout": state["stdout"], "warnings": state["warnings"]},
+            "diagnostic": state["error"]
+        };
+    }
+    return {"ok": 1, "value": {"stdout": state["stdout"], "warnings": state["warnings"]}, "diagnostic": 0};
+}

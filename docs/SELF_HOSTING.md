@@ -22,7 +22,17 @@ serialize entirely in Osaka. `run_gate_c.py` drives the bootstrap chain
 themselves) and compares `SHA256(stage2)` with `SHA256(stage3)`. The gate
 driver checkpoints each pipeline phase to `bootstrap/.ckpt.<stage>.*.json`
 so a crash loses at most one phase, and writes the provenance record on
-success. Remaining: Gate D (Osaka VM, `selfhost/vm.saka`).
+success.
+
+Gate D (runtime parity) is in progress: `selfhost/vm.saka` is a full 1:1
+Osaka port of Stage 0's `vm.py` (all SBC1 opcodes, frames/scopes,
+try-handler unwinding, kind tracking, policy warnings, and the reflection/
+file-I/O host boundary). `tests/test_selfhost_vm.py` runs a 28-case
+differential suite — every guest program is executed on both the Python VM
+and the Osaka VM and stdout, warnings, and unhandled-error text must match
+exactly. All 28 cases pass. Remaining for Gate D: the conformance corpus on
+the Osaka VM, `run_gate_d.py` (fixed point with stage runs executed on the
+Osaka VM itself), and the provenance record.
 
 This document defines the bootstrap architecture and the criteria used by this
 repository to describe Osaka as self-hosting. It is normative for self-hosting

@@ -64,15 +64,23 @@ BOOTSTRAP_PUBLIC_BUILTINS = {
 # compiler uses __is_float__ to classify numeric literal kinds, mirroring
 # Stage 0's isinstance(value, float) check. __json_type__ and __float_repr__
 # support the self-hosted SBC1 emitter's value dispatch and float formatting.
-BOOTSTRAP_INTERNAL_BUILTINS = {"__is_float__", "__float_repr__", "__json_type__"}
+# __is_bool__ exposes the Python data model's bool/int distinction (Osaka
+# source values cannot otherwise tell them apart, since True == 1); the
+# self-hosted VM delegates to it for value printing and truthiness parity.
+# __push_scope__/__pop_scope__ are the host null primitive: the self-hosted
+# VM captures Value(None) from __push_scope__ for default returns and list
+# growth fill (the profile has no null literal).
+BOOTSTRAP_INTERNAL_BUILTINS = {"__is_float__", "__float_repr__", "__json_type__",
+                               "__is_bool__", "__push_scope__", "__pop_scope__"}
 
 INTERNAL_BUILTIN_ARITIES = {
     "__bool_and__": 2,
     "__bool_not__": 1,
+    "__bool_or__": 2,
     "__float_repr__": 1,
+    "__is_bool__": 1,
     "__is_float__": 1,
     "__json_type__": 1,
-    "__bool_or__": 2,
     "__capture_trace__": 0,
     "__export_symbol__": 1,
     "__force_kind_grain__": 1,
