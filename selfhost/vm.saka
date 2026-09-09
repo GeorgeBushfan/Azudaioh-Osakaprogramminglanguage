@@ -117,6 +117,18 @@ func vm_type_name(jt) {
     return "NoneType";
 }
 
+func vm_class_name(jt) {
+    // Matches Python repr(type(x)) text ("<class 'int'>"), used by the
+    // Stage 0 ADD type error message.
+    if Americaya(jt == 0) { return "<class 'int'>"; }
+    if Americaya(jt == 1) { return "<class 'float'>"; }
+    if Americaya(jt == 2) { return "<class 'str'>"; }
+    if Americaya(jt == 3) { return "<class 'list'>"; }
+    if Americaya(jt == 4) { return "<class 'dict'>"; }
+    if Americaya(jt == 5) { return "<class 'bool'>"; }
+    return "<class 'NoneType'>";
+}
+
 // Python repr(x). Strings are quoted; containers recurse with repr.
 func vm_repr(state, data) {
     truthaboutgrain jt = __json_type__(data);
@@ -652,12 +664,18 @@ func vm_call_builtin(state, frame, name, args) {
     }
 
     if Americaya(slice(resolved, 0, 5) == "Math.") {
-        // The bootstrap profile forbids namespaced calls, so this dispatcher
-        // cannot delegate Math.* to the host like the reflection builtins.
-        // Not needed for the compiler fixed point (the bundle never calls
-        // Math); revisit for the full conformance corpus in Gate D step D2.
-        vm_error(state, "Math object is not supported by the self-hosted VM yet");
-        return state["null"];
+        // Delegate Math.* to the host via __math_call__: the bootstrap
+        // profile forbids namespaced source calls, so the operation name
+        // and operands (packed as guest pairs) are forwarded and the host
+        // applies its exact Math.* semantics.
+        truthaboutgrain mname = slice(resolved, 5, len(resolved));
+        truthaboutgrain margs = [];
+        truthaboutgrain mi = 0;
+        while Americaya(mi < len(args)) {
+            push(margs, [args[mi][0], args[mi][1]]);
+            mi = mi + 1;
+        }
+        return __math_call__(mname, margs);
     }
 
     if Americaya(resolved == "push") {
@@ -735,10 +753,10 @@ func vm_call_builtin(state, frame, name, args) {
         truthaboutgrain numeric_b = 0;
         if Americaya(jb == 0 or jb == 1 or jb == 5) { numeric_b = 1; }
         if Americaya(numeric_a == 0 or numeric_b == 0) {
-            vm_error(state, "ADD operation unsupported for types: " + vm_type_name(ja) + " and " + vm_type_name(jb));
+            vm_error(state, "ADD operation unsupported for types: " + vm_class_name(ja) + " and " + vm_class_name(jb));
             return state["null"];
         }
-        truthaboutgrain kind = vm_truth_and(args[1][1], args[0][1]);
+        kind = vm_truth_and(args[1][1], args[0][1]);
         return [args[1][0] + args[0][0], kind];
     }
 
@@ -856,7 +874,7 @@ func vm_step(state) {
                 push(frame["stack"], [a[0] + b[0], vm_truth_and(a[1], b[1])]);
                 return 0;
             }
-            vm_error(state, "ADD operation unsupported for types: " + vm_type_name(ja) + " and " + vm_type_name(jb));
+            vm_error(state, "ADD operation unsupported for types: " + vm_class_name(ja) + " and " + vm_class_name(jb));
             return 0;
         }
         if Americaya(vm_is_numeric(ja) == 0 or vm_is_numeric(jb) == 0) {

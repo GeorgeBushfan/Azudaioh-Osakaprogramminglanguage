@@ -1,0 +1,254 @@
+{
+ "gate": "D step D2 (conformance corpus on the Osaka VM)",
+ "contract": "stdout + warnings + unhandled error text, Python VM vs selfhost/vm.saka",
+ "excluded_compile_errors": [
+  "tests/FastTest.saka",
+  "tests/Stage3/01_block_basic.saka",
+  "tests/Stage3/02_if_truth_ok.saka",
+  "tests/Stage3/03_if_grain_fail.saka",
+  "tests/test_function_arguments.saka",
+  "tests/test_function_validation.saka"
+ ],
+ "exclusion_rationale": "legacy syntax no longer parsed by the Stage 0 frontend; not Gate D scope",
+ "excluded_module_tests": [
+  "tests/equivalence/14_file_module_values.saka",
+  "tests/equivalence/16_file_module_functions.saka"
+ ],
+ "module_exclusion_rationale": "runtime file-module loading is not part of the self-hosted VM boundary; modules are linked at compile time for self-hosted programs",
+ "results": [
+  {
+   "program": "tests/FastTest.saka",
+   "status": "compile-error",
+   "reason": "RuntimeError: Compiler: unsupported stmt <class 'ast_nodes.Declaration'>"
+  },
+  {
+   "program": "tests/Stage3/01_block_basic.saka",
+   "status": "compile-error",
+   "reason": "SyntaxError: Expected EQUAL, got COLON at position 2"
+  },
+  {
+   "program": "tests/Stage3/02_if_truth_ok.saka",
+   "status": "compile-error",
+   "reason": "SyntaxError: Expected EQUAL, got COLON at position 6"
+  },
+  {
+   "program": "tests/Stage3/03_if_grain_fail.saka",
+   "status": "compile-error",
+   "reason": "SyntaxError: Expected EQUAL, got IDENT at position 1"
+  },
+  {
+   "program": "tests/Stage3/04_comparison_kinds.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.2
+  },
+  {
+   "program": "tests/Stage3/05_while_truth_ok.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/Stage3/06_while_grain_fail.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/Stage3/07_scope_shadowing.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/Stage3/08_hecho_still_works.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/Stage3/09_regression_stage2.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/collectionstest.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/01_variable_assignment.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/02_control_flow.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/03_function_calls.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/04_error_handling.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/05_io_operations.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/06_sataandagi.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/07_americaya.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/08_math_object.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/09_math_object_js.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/10_math_object_trig_random.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.3
+  },
+  {
+   "program": "tests/equivalence/11_for_loop.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.2
+  },
+  {
+   "program": "tests/equivalence/12_break_continue.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.3
+  },
+  {
+   "program": "tests/equivalence/13_import_std.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/14_file_module_values.saka",
+   "status": "fail",
+   "reason": "stdout line 1: py='hello-module' saka='<EOF>'",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/15_file_io_basic.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/16_file_module_functions.saka",
+   "status": "fail",
+   "reason": "stdout line 1: py='hello-module' saka='<EOF>'",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/equivalence/debug_trace.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/helloworld.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_6d2.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_flow.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_fn.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_function_arguments.saka",
+   "status": "compile-error",
+   "reason": "SyntaxError: Expected RPAREN, got IDENT at position 4"
+  },
+  {
+   "program": "tests/test_function_validation.saka",
+   "status": "compile-error",
+   "reason": "SyntaxError: Expected RPAREN, got IDENT at position 4"
+  },
+  {
+   "program": "tests/test_lists.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_maps.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_stdlib.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_strings.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/test_vm.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  },
+  {
+   "program": "tests/testwarnings.saka",
+   "status": "pass",
+   "reason": "",
+   "elapsed_s": 0.1
+  }
+ ]
+}

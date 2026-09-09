@@ -34,13 +34,16 @@ def bundle_functions():
     return _BUNDLE_COMPILED
 
 
-def run_on_python_vm(document, argv=()):
+def run_on_python_vm(document, argv=(), source_path=None):
     """Run the SBC1 document on the Stage 0 Python VM."""
     from bytecode import BytecodeProgram
 
     program = program_from_dict(document)
     runtime = Runtime()
     runtime.program_args = list(argv)
+    if source_path is not None:
+        import os
+        runtime.current_file = os.path.abspath(source_path)
     vm = VM(runtime)
     error = None
     try:
@@ -54,7 +57,7 @@ def run_on_python_vm(document, argv=()):
     }
 
 
-def run_on_osaka_vm(document, argv=()):
+def run_on_osaka_vm(document, argv=(), source_path=None):
     """Run the SBC1 document on the self-hosted VM (vm.saka)."""
     from bytecode import BytecodeProgram, BytecodeProgram as _BP
     from bytecode import Value, PUSH_CONST, CALL_FUNC, HALT
@@ -74,6 +77,9 @@ def run_on_osaka_vm(document, argv=()):
     program = BytecodeProgram(consts=consts, code=code, functions=dict(functions))
     verify_program(program)
     runtime = Runtime()
+    if source_path is not None:
+        import os
+        runtime.current_file = os.path.abspath(source_path)
     vm = VM(runtime)
     vm.run(program)
     frame = vm.frames[-1] if vm.frames else None

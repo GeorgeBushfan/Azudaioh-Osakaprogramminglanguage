@@ -70,8 +70,12 @@ BOOTSTRAP_PUBLIC_BUILTINS = {
 # __push_scope__/__pop_scope__ are the host null primitive: the self-hosted
 # VM captures Value(None) from __push_scope__ for default returns and list
 # growth fill (the profile has no null literal).
+# __math_call__ delegates Math.* to the host: the profile forbids namespaced
+# source calls, so the self-hosted VM forwards Math.X and its operands as
+# guest pairs and the host applies the exact Math.* semantics.
 BOOTSTRAP_INTERNAL_BUILTINS = {"__is_float__", "__float_repr__", "__json_type__",
-                               "__is_bool__", "__push_scope__", "__pop_scope__"}
+                               "__is_bool__", "__push_scope__", "__pop_scope__",
+                               "__math_call__"}
 
 INTERNAL_BUILTIN_ARITIES = {
     "__bool_and__": 2,
@@ -81,6 +85,7 @@ INTERNAL_BUILTIN_ARITIES = {
     "__is_bool__": 1,
     "__is_float__": 1,
     "__json_type__": 1,
+    "__math_call__": 2,
     "__capture_trace__": 0,
     "__export_symbol__": 1,
     "__force_kind_grain__": 1,

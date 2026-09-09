@@ -27,7 +27,7 @@ func cp_internal_builtin_arities() {
     return {
         "__bool_and__": 2, "__bool_not__": 1, "__bool_or__": 2,
         "__float_repr__": 1, "__is_bool__": 1, "__is_float__": 1,
-        "__json_type__": 1,
+        "__json_type__": 1, "__math_call__": 2,
         "__capture_trace__": 0, "__export_symbol__": 1, "__force_kind_grain__": 1,
         "__force_kind_truth__": 1, "__import_file_module__": 2, "__import_module__": 1,
         "__pop_scope__": 0, "__push_scope__": 0, "__to_bool_preserve_kind__": 1,

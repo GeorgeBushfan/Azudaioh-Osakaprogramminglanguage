@@ -1,0 +1,17 @@
+Timeout (0:05:00)!
+Thread 0x000000016d8f7000 (most recent call first):
+  File "/Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/threading.py", line 306 in wait
+  File "/Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/threading.py", line 558 in wait
+  File "run_gate_c.py", line 186 in _loop
+  File "/Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/threading.py", line 870 in run
+  File "/Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/threading.py", line 932 in _bootstrap_inner
+  File "/Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/threading.py", line 890 in _bootstrap
+
+Thread 0x00000001fa3990c0 (most recent call first):
+  File "/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/vm.py", line 942 in run
+  File "run_gate_c.py", line 84 in _call_in_program
+  File "run_gate_c.py", line 140 in <lambda>
+  File "run_gate_c.py", line 132 in phase
+  File "run_gate_c.py", line 140 in run_stage_phased
+  File "run_gate_c.py", line 271 in main
+  File "run_gate_c.py", line 315 in <module>

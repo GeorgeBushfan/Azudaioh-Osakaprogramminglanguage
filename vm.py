@@ -359,6 +359,16 @@ class VM:
             val = args[0]
             return Value(isinstance(val.data, bool), "truth")
 
+        if name == "__math_call__":
+            # Host-delegated Math.* for the self-hosted VM (the bootstrap
+            # profile forbids namespaced source calls). Args are guest
+            # pairs: [op_name, [[data, kind], ...]]. The result is wrapped
+            # back into a guest [data, kind] pair.
+            mname = "Math." + args[0].data
+            operands = [Value(pair[0], pair[1]) for pair in args[1].data]
+            ret = self._call_builtin(mname, operands)
+            return Value([ret.data, ret.kind], "truth")
+
         if name == "__is_float__":
             val = args[0]
             return Value(isinstance(val.data, float), "truth")
