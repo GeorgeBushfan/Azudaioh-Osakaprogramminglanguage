@@ -1,182 +1,134 @@
+"""Control-flow-aware verifier for Osaka bytecode."""
+
+from collections import deque
+from bytecode import *
+from builtin_registry import BUILTIN_ARITIES
+
+
 class VerificationError(Exception):
     pass
 
 
-STACK_EFFECTS = {
-    "PUSH_CONST": lambda _: +1,
-    "LOAD_VAR": lambda _: +1,
-    "STORE_VAR": lambda _: -1,
-    "DUP": lambda _: +1,
-    "POP": lambda _: -1,
-    "ADD": lambda _: -1,           # pop 2, push 1
-    "SUB": lambda _: -1,
-    "MUL": lambda _: -1,
-    "DIV": lambda _: -1,
-    "MOD": lambda _: -1,
-    "CMP_EQ": lambda _: -1,
-    "CMP_NE": lambda _: -1,
-    "CMP_LT": lambda _: -1,
-    "CMP_LE": lambda _: -1,
-    "CMP_GT": lambda _: -1,
-    "CMP_GE": lambda _: -1,
-    "CALL_FUNC": lambda arg: -arg[1] + 1,
-    "CALL_BUILTIN": lambda arg: -arg[1] + 1,
-    "RET": lambda _: -1,
-    "HALT": lambda _: 0,
-}
-
-BUILTIN_ARITY = {
-    "Say": 1,
-    "len": 1,
-    "keys": 1,
-    "values": 1,
-    "contains": 2,
-    "slice": 3,
-    "push": 2,
-    "pop": 1,
-    "ReadFile": 1,
-    "WriteFile": 2,
-    "AppendFile": 2,
-    "FileExists": 1,
-    "DeleteFile": 1,
-    "Ah": 1,
-    "Hecho": 1,
-    "youknowsealsright": 1,
-    "Ivebeengot": 1,
-    "Getittogether": 0,
-    "SataAndagi": 0,
-    "Americaya": 1,
-    "Math.abs": 1,
-    "Math.min": 2,
-    "Math.max": 2,
-    "Math.pow": 2,
-    "Math.floor": 1,
-    "Math.ceil": 1,
-    "Math.sqrt": 1,
-    "Math.round": 1,
-    "Math.trunc": 1,
-    "Math.sign": 1,
-    "Math.clamp": 3,
-    "Math.PI": 0,
-    "Math.E": 0,
-    "Math.random": 0,
-    "Math.sin": 1,
-    "Math.cos": 1,
-    "Math.tan": 1,
-    "Math.sinh": 1,
-    "Math.cosh": 1,
-    "Math.tanh": 1,
-    "add": 2,
-    "__force_kind_grain__": 1,
-    "__force_kind_truth__": 1,
-    "__to_truthaboutgrain__": 1,
-    "__push_scope__": 0,
-    "__pop_scope__": 0,
-    "__capture_trace__": 0,
-    "__to_bool_preserve_kind__": 1,
-    "__bool_and__": 2,
-    "__bool_or__": 2,
-    "__bool_not__": 1,
-    "__import_module__": 1,
-    "__import_file_module__": 2,
-    "__export_symbol__": 1,
-    "std.len": 1,
-    "std.keys": 1,
-    "std.values": 1,
-    "std.contains": 2,
-    "std.slice": 3,
-    "std.push": 2,
-    "std.pop": 1,
-}
+BINARY_OPS = {ADD, SUB, MUL, DIV, MOD, CMP_EQ, CMP_NE, CMP_LT, CMP_LE, CMP_GT, CMP_GE}
+KNOWN_OPS = {PUSH_CONST, LOAD_VAR, STORE_VAR, DUP, POP, *BINARY_OPS,
+             MAKE_LIST, MAKE_MAP, INDEX_GET, INDEX_SET, CALL_BUILTIN,
+             CALL_FUNC, JMP, JMP_IF_FALSE, RET, HALT, TRACE_POINT,
+             TRY_PUSH, TRY_POP}
 
 
-def _read_instr(instr):
-    if hasattr(instr, "op"):
-        return instr.op, instr.arg
-    # tuple form: (op, arg, line)
-    if isinstance(instr, tuple):
-        if len(instr) >= 2:
-            return instr[0], instr[1]
-    raise VerificationError(f"Invalid instruction format: {instr!r}")
+def _instruction_tuple(instruction):
+    if hasattr(instruction, "op"):
+        return instruction.op, getattr(instruction, "arg", None), -1
+    return (*instruction, -1) if len(instruction) == 2 else instruction
 
 
-def _function_arity(function_table, fname):
-    entry = function_table[fname]
-    if isinstance(entry, int):
-        return entry
-    if isinstance(entry, dict):
-        if "params" in entry and isinstance(entry["params"], list):
-            return len(entry["params"])
-    raise VerificationError(f"Invalid function table entry for {fname}: {entry!r}")
+def _parts(function, fallback=0):
+    if isinstance(function, FunctionBytecode):
+        return function.program, len(function.params)
+    return function, fallback
 
-def verify(bytecode, function_table):
-    verify_block(bytecode.main, function_table, is_main=True)
 
-    for fname, fn_code in bytecode.functions.items():
-        verify_block(fn_code.code, function_table, is_main=False)
-
-def verify_block(code, function_table, is_main):
-    stack_height = 0
-    print(f"Verifying {'main' if is_main else 'function'} block")
-    
-    for ip, instr in enumerate(code):
-        op, arg = _read_instr(instr)
-        
-        print(f"[{ip}] {op} {arg or ''} (stack: {stack_height})")
-
-        # 1. opcode validity
-        if op not in STACK_EFFECTS:
-            raise VerificationError(f"Unknown opcode {op} at {ip}")
-
-        # 2. stack discipline
-        delta = STACK_EFFECTS[op](arg)
-        stack_height += delta
-        print(f"  -> Stack delta: {delta:+}, new height: {stack_height}")
-        
-        if stack_height < 0:
-            raise VerificationError(
-                f"Stack underflow at instruction {ip} ({op})"
-            )
-
-        # 3. CALL_FUNC arity checks
-        if op == "CALL_FUNC":
-            fname, argc = arg
-            if fname not in function_table:
-                raise VerificationError(f"Unknown function {fname}")
-            expected = _function_arity(function_table, fname)
-            if argc != expected:
+def _effect(op, arg, arities):
+    if op in {PUSH_CONST, LOAD_VAR}: return 0, 1
+    if op == STORE_VAR: return 1, -1
+    if op == DUP: return 1, 1
+    if op == POP: return 1, -1
+    if op in BINARY_OPS: return 2, -1
+    if op == MAKE_LIST: return arg, 1 - arg
+    if op == MAKE_MAP: return 2 * arg, 1 - 2 * arg
+    if op == INDEX_GET: return 2, -1
+    if op == INDEX_SET: return 3, -3
+    if op in {CALL_BUILTIN, CALL_FUNC}:
+        if not isinstance(arg, tuple) or len(arg) != 2:
+            raise VerificationError(f"Malformed call operand: {arg!r}")
+        name, argc = arg
+        if op == CALL_BUILTIN:
+            if name not in BUILTIN_ARITIES:
+                raise VerificationError(f"Unknown built-in {name}")
+            if argc != BUILTIN_ARITIES[name]:
                 raise VerificationError(
-                    f"Function {fname} expects {expected} args, got {argc}"
+                    f"Built-in {name} expects {BUILTIN_ARITIES[name]} args, got {argc}"
                 )
-
-        # 3b. CALL_BUILTIN arity checks
-        if op == "CALL_BUILTIN":
-            bname, argc = arg
-            if bname not in BUILTIN_ARITY:
-                raise VerificationError(f"Unknown builtin {bname}")
-            expected = BUILTIN_ARITY[bname]
-            if argc != expected:
-                raise VerificationError(
-                    f"Builtin {bname} expects {expected} args, got {argc}"
-                )
-
-        # 4. RET placement rules
-        if op == "RET" and is_main:
-            raise VerificationError("RET not allowed in main block")
-
-    # 5. end-of-block rules
-    if is_main:
-        last_op, _ = _read_instr(code[-1])
-        if last_op != "HALT":
-            raise VerificationError("Main block must end with HALT")
         else:
-            print("Main block ends with HALT - valid")
-    else:
-        last_op, _ = _read_instr(code[-1])
-        if last_op != "RET":
-            raise VerificationError("Function must end with RET")
-        else:
-            print("Function ends with RET - valid")
+            if name not in arities:
+                # File-module functions are linked at runtime after the
+                # preceding import instruction has loaded alias.symbol.
+                if "." in name:
+                    return argc, 1 - argc
+                raise VerificationError(f"Unknown function {name}")
+            if argc != arities[name]:
+                raise VerificationError(f"Function {name} expects {arities[name]} args, got {argc}")
+        return argc, 1 - argc
+    if op in {JMP_IF_FALSE, RET}: return 1, -1
+    return 0, 0
 
-    print(f"Final stack height: {stack_height}")
-    print("Block verification successful")
+
+def verify_block(code, consts, arities, is_function=False, entry_height=0, debug=False):
+    code = [_instruction_tuple(item) for item in code]
+    if not code:
+        raise VerificationError("Empty bytecode block")
+    heights, work, terminal = {0: entry_height}, deque([0]), False
+    while work:
+        ip = work.popleft()
+        height = heights[ip]
+        op, arg, _ = code[ip]
+        if op not in KNOWN_OPS:
+            raise VerificationError(f"Unknown opcode {op} at instruction {ip}")
+        if op == PUSH_CONST and (not isinstance(arg, int) or not 0 <= arg < len(consts)):
+            raise VerificationError(f"Invalid constant index {arg!r} at instruction {ip}")
+        if op in {JMP, JMP_IF_FALSE, TRY_PUSH} and (not isinstance(arg, int) or not 0 <= arg < len(code)):
+            raise VerificationError(f"Invalid jump target {arg!r} at instruction {ip}")
+        needed, delta = _effect(op, arg, arities)
+        if height < needed:
+            raise VerificationError(f"Stack underflow at instruction {ip}: {op} needs {needed}, has {height}")
+        out = height + delta
+        if debug: print(f"[{ip}] {op} {arg!r}: {height} -> {out}")
+        if op == RET:
+            if not is_function: raise VerificationError("RET not allowed in main block")
+            terminal, successors = True, []
+        elif op == HALT:
+            if is_function: raise VerificationError("HALT is not allowed in function bytecode")
+            terminal, successors = True, []
+        elif op == JMP:
+            successors = [arg]
+        elif op in {JMP_IF_FALSE, TRY_PUSH}:
+            successors = [arg] + ([ip + 1] if ip + 1 < len(code) else [])
+        else:
+            successors = [ip + 1] if ip + 1 < len(code) else []
+        for successor in successors:
+            if successor not in heights:
+                heights[successor] = out
+                work.append(successor)
+            elif heights[successor] != out:
+                raise VerificationError(f"Inconsistent stack height at instruction {successor}: {heights[successor]} versus {out}")
+    if not terminal:
+        raise VerificationError("Function must end with RET" if is_function else "Main block must end with HALT")
+    return True
+
+
+def verify_program(program, debug=False, arity_overrides=None):
+    functions = program.functions or {}
+    arities = {name: _parts(function)[1] for name, function in functions.items()}
+    arities.update(arity_overrides or {})
+    main = program.code or getattr(program, "main", None) or []
+    verify_block(main, program.consts, arities, debug=debug)
+    for name, function in functions.items():
+        function_program, arity = _parts(function, arities.get(name, 0))
+        code = function_program.code or getattr(function_program, "main", None) or []
+        # Function arguments are supplied by the caller and consumed by the
+        # parameter STORE_VAR prologue, so they are the block's entry stack.
+        verify_block(code, function_program.consts, arities, True, arity, debug)
+    return True
+
+
+def verify(program, function_table=None, debug=False):
+    overrides = {name: (len(value.get("params", [])) if isinstance(value, dict) else int(value))
+                 for name, value in (function_table or {}).items()}
+    return verify_program(program, debug, overrides)
+
+
+class BytecodeVerifier:
+    def __init__(self, program, debug=False):
+        self.program, self.debug = program, debug
+    def verify(self):
+        return verify_program(self.program, self.debug)

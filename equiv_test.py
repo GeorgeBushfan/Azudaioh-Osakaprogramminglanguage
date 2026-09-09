@@ -35,8 +35,9 @@ def parse_ast(source: str, show_tokens: bool = False, debug: bool = False):
     return ast
 
 
-def make_runtime() -> Runtime:
+def make_runtime(program_args=None) -> Runtime:
     rt = Runtime()
+    rt.program_args = list(program_args or [])
 
     # Ensure Stage 6D fields exist (harmless if already present)
     rt.initialised = getattr(rt, "initialised", set())
@@ -49,8 +50,8 @@ def make_runtime() -> Runtime:
     return rt
 
 
-def run_interpreter(ast, debug=False, source_path: Optional[str] = None) -> RunResult:
-    rt = make_runtime()
+def run_interpreter(ast, debug=False, source_path: Optional[str] = None, program_args=None) -> RunResult:
+    rt = make_runtime(program_args)
     rt.debug = debug  # Set debug mode
     if source_path:
         import os
@@ -86,8 +87,8 @@ def run_interpreter(ast, debug=False, source_path: Optional[str] = None) -> RunR
     )
 
 
-def run_vm(ast, debug=False, source_path: Optional[str] = None) -> RunResult:
-    rt = make_runtime()
+def run_vm(ast, debug=False, source_path: Optional[str] = None, program_args=None) -> RunResult:
+    rt = make_runtime(program_args)
     rt.debug = debug  # Set debug mode
     if source_path:
         import os

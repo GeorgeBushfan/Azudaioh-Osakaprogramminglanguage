@@ -1,0 +1,12 @@
+// Golden fixture: data structures, modules, governance, and error handling.
+import "./modules/mod_values.saka" as mod;
+
+truthaboutgrain config = {"name": "saka", "values": [1, 2.5, "three"]};
+config["extra"] = true;
+try {
+    Say(config["missing"]);
+} catch {
+    Say(mod.greeting());
+}
+Ah(config);
+Hecho(total);

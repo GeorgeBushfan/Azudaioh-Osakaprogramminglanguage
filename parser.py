@@ -4,6 +4,7 @@
 
 from ast_nodes import *
 import copy
+from lexer import decode_string_literal
 
 class Parser:
     def __init__(self, tokens, debug=False):
@@ -33,15 +34,8 @@ class Parser:
     def parse(self):
         statements = []
         while self.pos < len(self.tokens):
-            try:
-                stmt = self.statement()
-                statements.append(stmt)
-            except SyntaxError as e:
-                # If we're at the end of tokens, break gracefully
-                if "Unexpected end of input" in str(e) and self.pos >= len(self.tokens):
-                    break
-                else:
-                    raise
+            stmt = self.statement()
+            statements.append(stmt)
         if self.debug:
             print(f"Parsed {len(statements)} statements")
             for i, stmt in enumerate(statements):
@@ -90,7 +84,7 @@ class Parser:
             alias = None
             if self.peek()[0] == "STRING":
                 name_tok = self.consume("STRING")
-                module_name = name_tok[1].strip('"')
+                module_name = decode_string_literal(name_tok[1], name_tok[2])
                 is_path = True
                 if self.peek()[0] == "AS":
                     self.consume("AS")
@@ -139,7 +133,7 @@ class Parser:
                     value_expr = self.expression()
                     if self.peek()[0] == "SEMICOL":
                         self.consume("SEMICOL")
-                    return IndexAssign(Variable(name), index_expr, value_expr)
+                    return IndexAssign(Variable(name, token[2]), index_expr, value_expr, line=token[2])
 
             # rollback if not index assignment
             self.pos = save_pos
@@ -191,7 +185,7 @@ class Parser:
             
             if self.peek()[0] == "SEMICOL":
                 self.consume("SEMICOL")
-            return Declaration(kw_name, ident_value)
+            return Declaration(kw_name, ident_value, line=token[2])
 
         # Handle Getittogether()
         if kind == "GETITTOGETHER":
@@ -289,8 +283,9 @@ class Parser:
     
     def function_def(self):
         # Consume FUNCTION/FUNC token
+        line = -1
         if self.peek()[0] in ("FUNCTION", "FUNC"):
-            self.consume()
+            line = self.consume()[2]
         
         token = self.consume()        # function name (IDENT)
         name = token[1]
@@ -313,17 +308,17 @@ class Parser:
 
         self.consume("RPAREN")
         body = self.block()
-        return FunctionDef(name, params, body)
+        return FunctionDef(name, params, body, line=line)
     
     def return_stmt(self):
-        self.consume("RETURN")
+        tok = self.consume("RETURN")
         expr = self.expression()
         
         # Only consume semicolon if it's present
         if self.peek()[0] == "SEMICOL":
             self.consume("SEMICOL")
             
-        return Return(expr)
+        return Return(expr, line=tok[2])
 
     def term(self):
         if self.peek()[0] == 'EOF':
@@ -338,7 +333,7 @@ class Parser:
             return expr
 
         if kind == "STRING":
-            return String(value.strip('"'), line)
+            return String(decode_string_literal(value, line), line)
         
         if kind == "LBRACKET":
             elements = []
@@ -375,7 +370,7 @@ class Parser:
 
                     self.consume("COLON")
                     value_expr = self.expression()
-                    pairs.append((String(key_val.strip('"'), key_line), value_expr))
+                    pairs.append((String(decode_string_literal(key_val, key_line), key_line), value_expr))
 
                     if self.peek()[0] == "COMMA":
                         self.consume("COMMA")
@@ -446,7 +441,7 @@ class Parser:
         token = self.consume()
         kind, value, line = token[0], token[1], token[2] if len(token) > 2 else -1
         if kind == "STRING":
-            return String(value.strip('"'), line)
+            return String(decode_string_literal(value, line), line)
         if kind == "FLOAT":
             return Number(float(value), line)
         if kind == "NUMBER":

@@ -25,8 +25,9 @@ def run_file(path: str, debug: bool = False):
     rt.completed = getattr(rt, "completed", set())
     rt.var_kinds = getattr(rt, "var_kinds", {})
 
-    bc = Compiler(debug=debug).compile(ast)
-    verify(bc, Compiler.function_table)
+    compiler = Compiler(debug=debug)
+    bc = compiler.compile(ast)
+    verify(bc, compiler.function_table)
     VM(rt, debug=debug).run(bc)
 
     if not debug:

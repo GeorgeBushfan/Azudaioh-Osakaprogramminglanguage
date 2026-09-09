@@ -16,6 +16,30 @@ from bytecode import (
     CMP_EQ, CMP_NE, CMP_LT, CMP_LE, CMP_GT, CMP_GE,
     CALL_FUNC, RET, TRACE_POINT, TRY_PUSH, TRY_POP
 )
+from builtin_registry import validate_builtin_arity
+
+# Module-level so _call_builtin does not rebuild it on every call.
+_STD_ALIASES = {
+    "std.len": "len",
+    "std.keys": "keys",
+    "std.values": "values",
+    "std.contains": "contains",
+    "std.slice": "slice",
+    "std.push": "push",
+    "std.pop": "pop",
+}
+
+class _Uninitialized:
+    """Sentinel for pre-seeded frame locals that have not been assigned yet.
+
+    Pre-seeding function-local names in frame.locals isolates nested calls
+    from the shared scope chain, but unassigned slots must remain invisible
+    to variable loads and execution traces until first STORE_VAR.
+    """
+
+
+_UNINIT = _Uninitialized()
+
 
 class Frame:
     def __init__(self, code, consts, functions, ret_ip, locals_):
@@ -28,6 +52,7 @@ class Frame:
         self.stack = []  # Frame-local stack
         self.current_line = -1  # Track current line number
         self.try_stack = []  # stack of catch instruction pointers
+        self.scope_base = 1
 
 
 class VM:
@@ -43,6 +68,11 @@ class VM:
         self.frames = []
         self.scopes = [{}]
         self.vars: Dict[str, Value] = {}  # local global scope for now
+        # Cache of id(fn.program.code) -> has-return flag so CALL_FUNC does
+        # not rescan the callee body on every call. Keys stay valid because
+        # function objects are alive in the frame's function table for the
+        # whole run; each VM instance (including module sub-VMs) gets its own.
+        self._has_return = {}
         if self.debug:
             self.rt.debug = True
 
@@ -118,8 +148,9 @@ class VM:
         return seed / float(2 ** 31)
 
     def _get_var(self, frame, name: str) -> Value:
-        if name in frame.locals:
-            return frame.locals[name]
+        local = frame.locals.get(name)
+        if local is not None and not isinstance(local.data, _Uninitialized):
+            return local
         for scope in reversed(self.scopes):
             if name in scope:
                 return scope[name]
@@ -130,12 +161,18 @@ class VM:
         # if local exists, store into local; else scope-chain set_var semantics
         if name in frame.locals:
             target = frame.locals
-            # Function parameters are pre-seeded in frame.locals with
-            # Value(None, "grain"). First STORE_VAR into such a slot must
-            # keep grain semantics regardless of incoming argument kind.
+            # Interpreter parity: parameters are bound as grainsoftruth on
+            # first store, regardless of the argument's kind. Detected via
+            # the pre-seeded sentinel placeholder.
             existing = frame.locals.get(name)
-            if isinstance(existing, Value) and existing.data is None and existing.kind == "grain":
-                val = Value(val.data, "grain")
+            if isinstance(existing, Value) and isinstance(existing.data, _Uninitialized):
+                if name in getattr(frame, "param_names", ()):
+                    val = Value(val.data, "grain")
+            # Function locals must not participate in global mutation-policy
+            # bookkeeping: repeated helper calls otherwise contaminate each
+            # other through Runtime.initialised and emit spurious warnings.
+            target[name] = val
+            return
         else:
             target = None
             for scope in reversed(self.scopes):
@@ -227,15 +264,9 @@ class VM:
         # In VM we just pass actual values for now, except the few that operate on "variable names".
         # We'll do policy ones as name strings passed as Value(str, truth).
 
-        std_aliases = {
-            "std.len": "len",
-            "std.keys": "keys",
-            "std.values": "values",
-            "std.contains": "contains",
-            "std.slice": "slice",
-            "std.push": "push",
-            "std.pop": "pop",
-        }
+        std_aliases = _STD_ALIASES
+
+        validate_builtin_arity(name, len(args))
 
         if name == "__import_module__":
             module = args[0].data
@@ -324,6 +355,37 @@ class VM:
             truth_value = bool(val.data)
             return Value(truth_value, "truth")
 
+        if name == "__is_float__":
+            val = args[0]
+            return Value(isinstance(val.data, float), "truth")
+
+        if name == "__json_type__":
+            # Structural type probe for the self-hosted SBC1 emitter.
+            # 0=int 1=float 2=str 3=list 4=map 5=bool 6=null
+            data = args[0].data
+            if isinstance(data, bool):
+                return Value(5, "truth")
+            if data is None:
+                return Value(6, "truth")
+            if isinstance(data, int):
+                return Value(0, "truth")
+            if isinstance(data, float):
+                return Value(1, "truth")
+            if isinstance(data, str):
+                return Value(2, "truth")
+            if isinstance(data, list):
+                return Value(3, "truth")
+            if isinstance(data, dict):
+                return Value(4, "truth")
+            raise RuntimeError("__json_type__ unsupported constant type")
+
+        if name == "__float_repr__":
+            # Python repr() of a float: the exact text json.dumps emits.
+            data = args[0].data
+            if not isinstance(data, float):
+                raise RuntimeError("__float_repr__ expects a float")
+            return Value(repr(data), "truth")
+
         if name == "__to_bool_preserve_kind__":
             val = args[0]
             return Value(bool(val.data), val.kind)
@@ -359,6 +421,14 @@ class VM:
                 self.rt.info("Americaya: promoted grainsoftruth to truthaboutgrain")
             return Value(v.data, "truth")
 
+        if name == "Getittogether":
+            self.rt.has_unresolved_grain = False
+            return Value(None, "truth")
+
+        if name == "Ohmygah":
+            self.rt.warn(f"Ohmygah triggered on {args[0].data} (non-fatal)")
+            return Value(None, "truth")
+
         if name == "__push_scope__":
             self.scopes.append({})
             return Value(None, "truth")
@@ -370,6 +440,12 @@ class VM:
 
 
         # ---- Output ----
+        if name == "Args":
+            return Value(list(getattr(self.rt, "program_args", [])), "truth")
+
+        if name == "Panic":
+            raise RuntimeError(f"Panic: {args[0].data}")
+
         if name == "Say":
             v = args[0]
             if v.kind == "grain":
@@ -467,10 +543,6 @@ class VM:
 
         if name == "contains":
             m, k = args
-            # Compiler call-expression argument order can arrive reversed for
-            # some builtins; normalize to map,key shape for compatibility.
-            if not isinstance(m.data, dict) and isinstance(k.data, dict):
-                m, k = k, m
             if not isinstance(m.data, dict):
                 raise RuntimeError("contains() requires map")
             kind = self._truth_and(m.kind, k.kind)
@@ -507,9 +579,7 @@ class VM:
         if name == "Math.pow":
             if len(args) != 2:
                 raise RuntimeError("Math.pow() expects 2 arguments")
-            # Argument order in VM call convention is currently reversed for 2-arg builtins.
-            # Keep semantic parity with interpreter/source order: Math.pow(base, exp).
-            b, a = args
+            a, b = args
             kind = self._truth_and(a.kind, b.kind)
             return Value(pow(a.data, b.data), kind)
 
@@ -691,6 +761,11 @@ class VM:
     # ---------- execution trace capture ----------
     def _capture_trace(self, frame):
         """Capture VM execution state matching interpreter trace format"""
+        # Opt-out for long batch runs: each trace snapshots every variable
+        # plus the full stdout/stderr buffers into an unbounded list, which
+        # grows without limit over a self-hosting compile (and costs CPU).
+        if not getattr(self.rt, "capture_traces", True):
+            return
         # Debug: print trace capture attempt
         if self.debug:
             print(f"Attempting to capture trace at line {frame.current_line}")
@@ -705,9 +780,13 @@ class VM:
         if self.debug:
             print(f"  Found {len(variables)} variables")
         
-        # Create variable dictionary with raw values to match interpreter traces
+        # Create variable dictionary with raw values to match interpreter traces.
+        # Pre-seeded-but-unassigned frame locals are omitted so traces mirror
+        # the interpreter (assignments that never completed leave no variable).
         var_data = {}
         for name, val in variables.items():
+            if isinstance(val.data, _Uninitialized):
+                continue
             var_data[name] = val.data
             
         # Debug: print variable data
@@ -774,6 +853,9 @@ class VM:
 
     # ---------- execute ----------
     def run(self, program: BytecodeProgram):
+        from verifier import verify_program
+        verify_program(program, debug=self.debug)
+
         # Initialize execution traces
         if not hasattr(self.rt, 'execution_traces'):
             self.rt.execution_traces = []
@@ -819,12 +901,12 @@ class VM:
             
         # Create entry frame
         entry = Frame(program.code, program.consts, program.functions or {}, ret_ip=-1, locals_={})
+        entry.scope_base = len(self.scopes)
         self.frames.append(entry)
         
         # Unified execution loop
-        step = 0
+        debug = self.debug
         while self.frames:
-            step += 1
             frame = self.frames[-1]
             
             # Check if frame has finished execution
@@ -849,15 +931,15 @@ class VM:
             frame.current_line = line  # Update current line
             frame.ip += 1
             
-            if self.debug:
+            if debug:
                 print(f"VM: Capturing trace at IP={frame.ip-1}, line={line}")
             
             # Debug print
-            if self.debug:
-                print(f"\nStep {step}: Frame {id(frame)} IP={frame.ip}/{len(frame.code)} Stack size={len(frame.stack)}")
-            if self.debug and frame.ip < len(frame.code):
-                op, arg, _ = frame.code[frame.ip]
-                print(f"  Executing: {op} {arg}")
+            if debug:
+                print(f"\nStep: Frame {id(frame)} IP={frame.ip}/{len(frame.code)} Stack size={len(frame.stack)}")
+                if frame.ip < len(frame.code):
+                    op, arg, _ = frame.code[frame.ip]
+                    print(f"  Executing: {op} {arg}")
             
             # Process instruction using frame-local stack
             try:
@@ -865,7 +947,7 @@ class VM:
                     const_val = frame.consts[arg]
                     if self.debug:
                         print(f"  PUSH_CONST: {const_val}")
-                    frame.stack.append(const_val)
+                    frame.stack.append(Value(const_val.data, const_val.kind))
                 elif op == LOAD_VAR:
                     frame.stack.append(self._get_var(frame, arg))
                 elif op == STORE_VAR:
@@ -883,10 +965,8 @@ class VM:
                 elif op == ADD:
                     b = frame.stack.pop()
                     a = frame.stack.pop()
-                    # Enforce type safety: both numbers or both strings
-                    if type(a.data) != type(b.data):
-                        raise RuntimeError(f"ADD operation between incompatible types: {type(a.data)} and {type(b.data)}")
-                    # Handle numbers and strings separately
+                    # Numeric addition permits mixed integer/float values;
+                    # string concatenation still requires two strings.
                     if isinstance(a.data, (int, float)) and isinstance(b.data, (int, float)):
                         data = a.data + b.data
                     elif isinstance(a.data, str) and isinstance(b.data, str):
@@ -1014,8 +1094,14 @@ class VM:
                     if len(frame.stack) < argc:
                         raise RuntimeError(f"Function '{fname}' expects {expected_args} arguments, but only {len(frame.stack)} available")
                     
-                    # Check for return instruction in function bytecode
-                    has_return = any(instr_op == RET for instr_op, _, _ in fn.program.code)
+                    # Check for return instruction in function bytecode.
+                    # Cached per callee body: rescanning the whole function on
+                    # every call dominated self-hosting workloads.
+                    code_id = id(fn.program.code)
+                    has_return = self._has_return.get(code_id)
+                    if has_return is None:
+                        has_return = any(instr_op == RET for instr_op, _, _ in fn.program.code)
+                        self._has_return[code_id] = has_return
                     if not has_return:
                         raise RuntimeError(f"Function {fname} missing return")
 
@@ -1023,9 +1109,14 @@ class VM:
                     args = [frame.stack.pop() for _ in range(argc)]
                     # Reverse to get original argument order
                     args.reverse()
-                    # Create a new frame with arguments on the stack
-                    param_locals = {p: Value(None, "grain") for p in fn.params}
+                    # Create a new frame with all function-local variables pre-seeded
+                    # with a sentinel so nested calls cannot contaminate the caller's
+                    # scope chain. Slots become real values on first STORE_VAR.
+                    param_locals = {var: Value(_UNINIT, "grain") for var in fn.locals}
                     newf = Frame(fn.program.code, fn.program.consts, frame.functions, ret_ip=frame.ip, locals_=param_locals)
+                    newf.function_name = fname
+                    newf.param_names = set(fn.params)
+                    newf.scope_base = len(self.scopes)
                     # Push arguments in correct order (first argument first)
                     for arg_val in args:
                         newf.stack.append(arg_val)
@@ -1034,6 +1125,8 @@ class VM:
                     continue
                 elif op == RET:
                     ret = frame.stack.pop() if frame.stack else Value(None, "truth")
+                    while len(self.scopes) > frame.scope_base:
+                        self.scopes.pop()
                     self.frames.pop()
                     if self.frames:
                         # Push return value to caller's stack
@@ -1042,14 +1135,17 @@ class VM:
                 elif op == JMP_IF_FALSE:
                     cond = frame.stack.pop()
                     if cond.kind != "truth":
-                        raise RuntimeError("Control flow condition must be truthaboutgrain")
+                        raise RuntimeError(
+                            f"Control flow condition must be truthaboutgrain "
+                            f"(function={getattr(frame, 'function_name', 'main')}, line={line}, value={cond.data!r})"
+                        )
                     if not cond.data:
                         frame.ip = arg
                 elif op == TRACE_POINT:
                     # Capture trace at explicit trace points
                     self._capture_trace(frame)
                 elif op == TRY_PUSH:
-                    frame.try_stack.append(arg)
+                    frame.try_stack.append((arg, len(self.scopes), len(frame.stack)))
                 elif op == TRY_POP:
                     if frame.try_stack:
                         frame.try_stack.pop()
@@ -1062,9 +1158,15 @@ class VM:
                 while self.frames:
                     top = self.frames[-1]
                     if top.try_stack:
-                        top.ip = top.try_stack.pop()
+                        catch_ip, scope_depth, stack_height = top.try_stack.pop()
+                        while len(self.scopes) > scope_depth:
+                            self.scopes.pop()
+                        del top.stack[stack_height:]
+                        top.ip = catch_ip
                         handled = True
                         break
+                    while len(self.scopes) > top.scope_base:
+                        self.scopes.pop()
                     self.frames.pop()
                 if handled:
                     continue

@@ -19,6 +19,7 @@ from ast_nodes import (
     If, While, Block, Compare, FunctionDef, Return, TryCatch, UnaryOp,
     Break, Continue, Import, Export,
 )
+from builtin_registry import POLICY_NAME_BUILTINS, is_builtin, validate_builtin_arity
 
 class Compiler:
     def __init__(self, debug=False):
@@ -28,6 +29,7 @@ class Compiler:
         self.functions = {}   # name -> FunctionBytecode
         self.function_table = {}  # Add function table for verification
         self.loop_stack = []
+        self.scope_depth = 0
 
 
 
@@ -43,20 +45,44 @@ class Compiler:
         
     def compile_program(self, program) -> BytecodeProgram:
         # First pass: compile all function definitions
+        self.consts = []
         self.code = []
+        self.functions = {}
+        self.function_table = {}
+        self.loop_stack = []
+        self.scope_depth = 0
+        # Register every function signature before compiling any body so that
+        # forward calls and mutual recursion are checked with full knowledge
+        # of the statically bundled source unit.
+        for stmt in program:
+            if isinstance(stmt, FunctionDef):
+                self.function_table[stmt.name] = {
+                    "params": list(stmt.params),
+                    "return_type": None,
+                }
         for stmt in program:
             if isinstance(stmt, FunctionDef):
                 self.compile_function_def(stmt)
                 
         # Second pass: compile other statements into one contiguous main stream
         for stmt in program:
-            if not isinstance(stmt, FunctionDef):
-                line = getattr(stmt, "line", -1)
+            line = getattr(stmt, "line", -1)
+            if isinstance(stmt, FunctionDef):
+                # The interpreter registers definitions at runtime and emits
+                # its normal before/execute/after trace triplet.  Functions
+                # are linked statically in SBC, so preserve those observable
+                # trace points as no-ops in main.
                 if line != -1:
                     self.emit(TRACE_POINT, None, line)
-                self.compile_stmt(stmt)
-                if line != -1:
                     self.emit(TRACE_POINT, None, line)
+                    self.emit(TRACE_POINT, None, line)
+                continue
+            if line != -1:
+                self.emit(TRACE_POINT, None, line)
+            self.compile_stmt(stmt)
+            if line != -1:
+                self.emit(TRACE_POINT, None, line)
+        self.emit(HALT, None, -1)
         main_code = self.code.copy()
                 
         # Create BytecodeProgram with main code as executable code
@@ -67,14 +93,53 @@ class Compiler:
             main=main_code
         )
         
+    def _collect_local_vars(self, node):
+        """Collect all variable names declared in a statement tree."""
+        locals_set = set()
+        
+        if isinstance(node, Assign):
+            locals_set.add(node.name)
+        elif isinstance(node, Block):
+            for stmt in node.statements:
+                locals_set.update(self._collect_local_vars(stmt))
+        elif isinstance(node, If):
+            locals_set.update(self._collect_local_vars(node.body))
+            if getattr(node, "else_body", None):
+                locals_set.update(self._collect_local_vars(node.else_body))
+        elif isinstance(node, While):
+            locals_set.update(self._collect_local_vars(node.body))
+        elif isinstance(node, TryCatch):
+            locals_set.update(self._collect_local_vars(node.try_body))
+            if node.catch_body:
+                locals_set.update(self._collect_local_vars(node.catch_body))
+        
+        return locals_set
+    
     def compile_function_def(self, node):
         if self.debug:
             print(f"Compiling function: {node.name}")
         # Create sub-compiler for function body
-        sub_compiler = Compiler()
+        sub_compiler = Compiler(debug=self.debug)
+        # Functions in a source unit share one static namespace. Seeding the
+        # sub-compiler with every signature avoids treating forward calls as
+        # unverifiable while the containing program still owns the bodies.
+        sub_compiler.functions = dict(self.functions)
+        for function_name, signature in self.function_table.items():
+            if function_name not in sub_compiler.functions:
+                sub_compiler.functions[function_name] = FunctionBytecode(
+                    params=list(signature["params"]),
+                    program=BytecodeProgram([], [], {}),
+                )
+        
+        # Collect all local variables from function body (parameters + declarations)
+        # All must be pre-seeded in frame.locals to prevent nested function calls
+        # from corrupting caller variables through shared scope chains
+        all_locals = set(node.params)
+        all_locals.update(self._collect_local_vars(node.body))
+        all_locals = list(all_locals)
         
         # Declare parameters as local variables
-        for param in node.params:
+        for param in reversed(node.params):
             sub_compiler.emit(STORE_VAR, param)
             
         # Compile function body
@@ -82,6 +147,8 @@ class Compiler:
         
         # Add return if missing
         if not sub_compiler.code or sub_compiler.code[-1][0] != RET:
+            none_index = sub_compiler.add_const(None, "truth")
+            sub_compiler.emit(PUSH_CONST, none_index)
             sub_compiler.emit(RET, None)
             
         # Create function bytecode
@@ -91,10 +158,12 @@ class Compiler:
             {}
         )
         
-        # Add to functions dictionary
+        # Add to functions dictionary with parameters list
+        # Only parameters are pre-populated in frame.locals to provide isolation
         self.functions[node.name] = FunctionBytecode(
             params=node.params,
-            program=func_program
+            program=func_program,
+            locals=all_locals
         )
         
         # Add to function table for verification
@@ -103,7 +172,8 @@ class Compiler:
             "return_type": None  # Placeholder for actual type system
         }
         
-        print(f"Added function: {node.name} with {len(node.params)} parameters")
+        if self.debug:
+            print(f"Added function: {node.name} with {len(node.params)} parameters and {len(all_locals)} local vars")
     
     def emit_placeholder(self, op):
             """Emit jump with placeholder operand, return index to patch later."""
@@ -113,6 +183,12 @@ class Compiler:
     def patch(self, instr_index, target_ip):
             op, _, line = self.code[instr_index]
             self.code[instr_index] = (op, target_ip, line)
+
+    def emit_scope_unwind(self, target_depth):
+        """Emit runtime scope exits without changing compile-time nesting."""
+        for _ in range(self.scope_depth - target_depth):
+            self.emit(CALL_BUILTIN, ("__pop_scope__", 0))
+            self.emit(POP, None)
 
 
     # ---------- statements ----------
@@ -145,6 +221,7 @@ class Compiler:
         
         if isinstance(node, Return):
             self.compile_expr(node.expr)
+            self.emit_scope_unwind(0)
             self.emit(RET, None)
             return
 
@@ -160,6 +237,7 @@ class Compiler:
                 const_index = self.add_const(node.module, "truth")
                 self.emit(PUSH_CONST, const_index, getattr(node, "line", -1))
                 self.emit(CALL_BUILTIN, ("__import_module__", 1), getattr(node, "line", -1))
+            self.emit(POP, None, getattr(node, "line", -1))
             return
 
         if isinstance(node, Export):
@@ -169,12 +247,14 @@ class Compiler:
                 name_idx = self.add_const(inner.name, "truth")
                 self.emit(PUSH_CONST, name_idx, getattr(node, "line", -1))
                 self.emit(CALL_BUILTIN, ("__export_symbol__", 1), getattr(node, "line", -1))
+                self.emit(POP, None, getattr(node, "line", -1))
                 return
             if isinstance(inner, FunctionDef):
                 self.compile_function_def(inner)
                 name_idx = self.add_const(inner.name, "truth")
                 self.emit(PUSH_CONST, name_idx, getattr(node, "line", -1))
                 self.emit(CALL_BUILTIN, ("__export_symbol__", 1), getattr(node, "line", -1))
+                self.emit(POP, None, getattr(node, "line", -1))
                 return
             raise RuntimeError("Compiler: export currently supports only variable assignments/declarations")
             return
@@ -182,6 +262,7 @@ class Compiler:
         if isinstance(node, Break):
             if not self.loop_stack:
                 raise RuntimeError("break used outside loop")
+            self.emit_scope_unwind(self.loop_stack[-1]["scope_depth"])
             jmp_ix = self.emit_placeholder(JMP)
             self.loop_stack[-1]["break_sites"].append(jmp_ix)
             return
@@ -189,6 +270,7 @@ class Compiler:
         if isinstance(node, Continue):
             if not self.loop_stack:
                 raise RuntimeError("continue used outside loop")
+            self.emit_scope_unwind(self.loop_stack[-1]["scope_depth"])
             self.emit(JMP, self.loop_stack[-1]["continue_target"])
             return
 
@@ -204,16 +286,18 @@ class Compiler:
         
         if isinstance(node, Block):
             self.emit(CALL_BUILTIN, ("__push_scope__", 0), getattr(node, "line", -1))
+            self.emit(POP, None, getattr(node, "line", -1))
+            self.scope_depth += 1
             for s in node.statements:
                 self.compile_stmt(s)
+            self.scope_depth -= 1
             self.emit(CALL_BUILTIN, ("__pop_scope__", 0), getattr(node, "line", -1))
+            self.emit(POP, None, getattr(node, "line", -1))
             return
         
         if isinstance(node, If):
             # condition -> stack
             self.compile_expr(node.condition)
-            # Convert truth to truthaboutgrain
-            self.emit(CALL_BUILTIN, ("__to_truthaboutgrain__", 1))
 
             # if false, jump to end of body
             jmp_false_ix = self.emit_placeholder(JMP_IF_FALSE)
@@ -235,12 +319,14 @@ class Compiler:
         if isinstance(node, While):
             loop_start = len(self.code)
 
-            loop_ctx = {"break_sites": [], "continue_target": loop_start}
+            loop_ctx = {
+                "break_sites": [],
+                "continue_target": loop_start,
+                "scope_depth": self.scope_depth,
+            }
             self.loop_stack.append(loop_ctx)
 
             self.compile_expr(node.condition)
-            # Convert truth to truthaboutgrain
-            self.emit(CALL_BUILTIN, ("__to_truthaboutgrain__", 1))
             jmp_false_ix = self.emit_placeholder(JMP_IF_FALSE)
 
             self.compile_stmt(node.body)
@@ -302,32 +388,20 @@ class Compiler:
             return
 
         if isinstance(node, Call):
-            # Strictly allow only these built-in functions as statements
-            BUILTIN_STATEMENT_FUNCS = {
-                "Say", "Ah", "Hecho", "youknowsealsright", 
-                "Ivebeengot", "Getittogether", "push", "pop",
-                "ReadFile", "WriteFile", "AppendFile", "FileExists", "DeleteFile",
-                "std.len", "std.keys", "std.values", "std.contains", "std.slice", "std.push", "std.pop",
-                "SataAndagi", "Americaya",
-                "Math.abs", "Math.min", "Math.max", "Math.pow", "Math.floor", "Math.ceil",
-                "Math.sqrt", "Math.round", "Math.trunc", "Math.sign", "Math.clamp",
-                "Math.random", "Math.sin", "Math.cos", "Math.tan",
-                "Math.sinh", "Math.cosh", "Math.tanh"
-            }
-
-            POLICY_NAME_FUNCS = {"Ah", "Hecho", "youknowsealsright", "Ivebeengot"}
-            
-            if node.name not in BUILTIN_STATEMENT_FUNCS:
+            if not is_builtin(node.name):
                 # Allow user-defined function calls in statement position.
                 # Return value (if any) is ignored by the source program.
-                for a in reversed(node.args):
+                for a in node.args:
                     self.compile_expr(a)
                 self.emit(CALL_FUNC, (node.name, len(node.args)), node.line)
+                self.emit(POP, None, node.line)
                 return
+
+            validate_builtin_arity(node.name, len(node.args))
             
             # Compile arguments
             for arg in node.args:
-                if node.name in POLICY_NAME_FUNCS and isinstance(arg, Variable):
+                if node.name in POLICY_NAME_BUILTINS and isinstance(arg, Variable):
                     const_index = self.add_const(arg.name, "truth")
                     self.emit(PUSH_CONST, const_index, node.line)
                 else:
@@ -335,6 +409,7 @@ class Compiler:
             
             # Emit CALL_BUILTIN for built-in statement functions
             self.emit(CALL_BUILTIN, (node.name, len(node.args)), node.line)
+            self.emit(POP, None, node.line)
             return
 
         raise RuntimeError(f"Compiler: unsupported stmt {type(node)}")
@@ -347,41 +422,21 @@ class Compiler:
                 self.emit(LOAD_VAR, node.name, node.line)
                 return
 
-            # Define built-in names first
-            BUILTIN_NAMES = {
-                "Say", "len", "keys", "values", "contains", "slice",
-                "push", "pop",
-                "ReadFile", "WriteFile", "AppendFile", "FileExists", "DeleteFile",
-                "std.len", "std.keys", "std.values", "std.contains", "std.slice", "std.push", "std.pop",
-                "Ah", "Hecho", "youknowsealsright", "Ivebeengot",
-                "SataAndagi", "Americaya",
-                "Math.abs", "Math.min", "Math.max", "Math.pow", "Math.floor", "Math.ceil",
-                "Math.sqrt", "Math.round", "Math.trunc", "Math.sign", "Math.clamp",
-                "Math.PI", "Math.E",
-                "Math.random", "Math.sin", "Math.cos", "Math.tan",
-                "Math.sinh", "Math.cosh", "Math.tanh",
-                "__import_module__",
-                "__import_file_module__",
-                "__export_symbol__",
-                "__force_kind_grain__", "__force_kind_truth__",
-                "__to_bool_preserve_kind__", "__bool_and__", "__bool_or__", "__bool_not__",
-            }
-
             # Validate argument count for user-defined functions
-            if node.name not in BUILTIN_NAMES and node.name in self.functions:
+            if not is_builtin(node.name) and node.name in self.functions:
                 expected_args = len(self.functions[node.name].params)
                 if len(node.args) != expected_args:
                     raise RuntimeError(f"Function '{node.name}' expects {expected_args} arguments, got {len(node.args)}")
 
-            # Compile args in reverse order (right-to-left)
-            # to ensure leftmost argument is at top of stack
-            for a in reversed(node.args):
+            # Evaluate and push arguments left-to-right in source order.
+            for a in node.args:
                 self.compile_expr(a)
 
-            # Debug: print function call
-            print(f"Emitting call to {node.name} with {len(node.args)} arguments")
+            if self.debug:
+                print(f"Emitting call to {node.name} with {len(node.args)} arguments")
             
-            if node.name in BUILTIN_NAMES:
+            if is_builtin(node.name):
+                validate_builtin_arity(node.name, len(node.args))
                 self.emit(CALL_BUILTIN, (node.name, len(node.args)), node.line)
             else:
                 self.emit(CALL_FUNC, (node.name, len(node.args)), node.line)

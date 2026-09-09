@@ -1,0 +1,818 @@
+// Recursive-descent Osaka parser producing canonical tagged-map AST records.
+// Ported 1:1 from Stage 0 parser.py. Key adaptations:
+// - mutable parser state map {"tokens", "position", "error"} instead of a class;
+// - failures are recorded in state["error"] (Osaka catch cannot bind a value);
+// - the token list includes the EOF record, so Stage 0 bounds checks
+//   `pos < len(tokens)` become `pos < len(tokens) - 1`;
+// - absent/null AST fields (missing else, alias, EOF-truncated expressions)
+//   are represented as 0 until Osaka gains a null literal;
+// - control-flow conditions over parameter-derived values are wrapped in
+//   explicit Americaya(...) promotion, matching the bootstrap profile.
+
+// ---------- parser diagnostics ----------
+
+func parser_diag_eof(span) {
+    return {"phase": "parser", "code": "PARSE_UNEXPECTED_EOF", "expected": 0, "found": "EOF", "span": span};
+}
+
+func parser_diag_expected(found, expected, span) {
+    return {"phase": "parser", "code": "PARSE_EXPECTED_TOKEN", "expected": expected, "found": found, "span": span};
+}
+
+// Stage 0 raises these errors without a position marker; the canonical
+// normalizer falls back to the EOF token span with found "EOF".
+func parser_diag_special(state, expected) {
+    truthaboutgrain tokens = state["tokens"];
+    truthaboutgrain eof_span = tokens[len(tokens) - 1]["span"];
+    return {"phase": "parser", "code": "PARSE_EXPECTED_TOKEN", "expected": expected, "found": "EOF", "span": eof_span};
+}
+
+func parser_diag_unexpected(state) {
+    truthaboutgrain tokens = state["tokens"];
+    truthaboutgrain eof_span = tokens[len(tokens) - 1]["span"];
+    return {"phase": "parser", "code": "PARSE_UNEXPECTED_TOKEN", "expected": 0, "found": "EOF", "span": eof_span};
+}
+
+// ---------- parser state ----------
+
+func parser_state(tokens) {
+    return {"tokens": tokens, "position": 0, "error": 0};
+}
+
+func parser_peek(state) {
+    truthaboutgrain tokens = state["tokens"];
+    truthaboutgrain pos = state["position"];
+    if pos >= len(tokens) {
+        return tokens[len(tokens) - 1];
+    }
+    return tokens[pos];
+}
+
+func parser_peek_kind(state) {
+    return Americaya(parser_peek(state)["kind"]);
+}
+
+// True while unconsumed non-EOF tokens remain (Stage 0: pos < len(tokens)).
+func parser_more(state) {
+    truthaboutgrain tokens = state["tokens"];
+    truthaboutgrain pos = state["position"];
+    return Americaya(pos < len(tokens) - 1);
+}
+
+func parser_failed(state) {
+    return Americaya(state["error"] != 0);
+}
+
+func parser_consume(state, expected_kind) {
+    truthaboutgrain tokens = state["tokens"];
+    truthaboutgrain pos = state["position"];
+    if pos >= len(tokens) - 1 {
+        state["error"] = parser_diag_eof(tokens[len(tokens) - 1]["span"]);
+        return 0;
+    }
+    truthaboutgrain token = tokens[pos];
+    if Americaya(expected_kind != 0) {
+        if Americaya(token["kind"] != expected_kind) {
+            state["error"] = parser_diag_expected(token["kind"], expected_kind, token["span"]);
+            return 0;
+        }
+    }
+    state["position"] = pos + 1;
+    return token;
+}
+
+func parser_opt_semicol(state) {
+    if parser_peek_kind(state) == "SEMICOL" {
+        parser_consume(state, "SEMICOL");
+    }
+}
+
+// Default import alias from a path module: text after the last "/", before
+// the last "." (mirrors rsplit("/", 1)[-1].rsplit(".", 1)[0]).
+func parser_module_stem(module_name) {
+    truthaboutgrain text = Americaya(module_name);
+    truthaboutgrain start = 0;
+    truthaboutgrain i = 0;
+    while i < len(text) {
+        if sh_char_at(text, i) == "/" { start = i + 1; }
+        i = i + 1;
+    }
+    truthaboutgrain stem = slice(text, start, len(text));
+    truthaboutgrain end = len(stem);
+    truthaboutgrain j = 0;
+    while j < len(stem) {
+        if sh_char_at(stem, j) == "." { end = j; }
+        j = j + 1;
+    }
+    return slice(stem, 0, end);
+}
+
+// Shared call-argument list: "(" already consumed, stops before ")".
+// Stage 0 loops forever on EOF-truncated argument lists; here the loop
+// exits at EOF and the following RPAREN consume fails cleanly instead.
+func parser_call_args(state) {
+    truthaboutgrain args = [];
+    while Americaya(parser_peek_kind(state) != "RPAREN" and parser_peek_kind(state) != "EOF") {
+        truthaboutgrain arg = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        push(args, arg);
+        if parser_peek_kind(state) == "COMMA" {
+            parser_consume(state, "COMMA");
+            if parser_failed(state) { return 0; }
+        }
+    }
+    return args;
+}
+
+// ---------- expressions ----------
+
+func parser_expression(state) {
+    if parser_peek_kind(state) == "EOF" {
+        return 0;
+    }
+    return parser_or_expr(state);
+}
+
+func parser_or_expr(state) {
+    truthaboutgrain left = parser_and_expr(state);
+    if parser_failed(state) { return 0; }
+    while Americaya(parser_more(state) and parser_peek_kind(state) == "OR") {
+        truthaboutgrain op_tok = parser_consume(state, "OR");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain right = parser_and_expr(state);
+        if parser_failed(state) { return 0; }
+        left = ast_binary("or", left, right, op_tok["span"]["start"]["line"]);
+    }
+    return left;
+}
+
+func parser_and_expr(state) {
+    truthaboutgrain left = parser_not_expr(state);
+    if parser_failed(state) { return 0; }
+    while Americaya(parser_more(state) and parser_peek_kind(state) == "AND") {
+        truthaboutgrain op_tok = parser_consume(state, "AND");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain right = parser_not_expr(state);
+        if parser_failed(state) { return 0; }
+        left = ast_binary("and", left, right, op_tok["span"]["start"]["line"]);
+    }
+    return left;
+}
+
+func parser_not_expr(state) {
+    if Americaya(parser_more(state) and parser_peek_kind(state) == "NOT") {
+        truthaboutgrain tok = parser_consume(state, "NOT");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain operand = parser_not_expr(state);
+        if parser_failed(state) { return 0; }
+        return ast_unary("not", operand, tok["span"]["start"]["line"]);
+    }
+    return parser_compare_expr(state);
+}
+
+func parser_compare_expr(state) {
+    truthaboutgrain left = parser_addition(state);
+    if parser_failed(state) { return 0; }
+    if Americaya(parser_more(state) and contains({"EQEQ": 0, "NEQ": 0, "LT": 0, "LE": 0, "GT": 0, "GE": 0}, parser_peek_kind(state))) {
+        truthaboutgrain op_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain right = parser_addition(state);
+        if parser_failed(state) { return 0; }
+        return ast_compare(op_tok["value"], left, right, op_tok["span"]["start"]["line"]);
+    }
+    return left;
+}
+
+func parser_addition(state) {
+    truthaboutgrain left = parser_multiplication(state);
+    if parser_failed(state) { return 0; }
+    while Americaya(parser_more(state) and contains({"PLUS": 0, "MINUS": 0}, parser_peek_kind(state))) {
+        truthaboutgrain op_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain op = "+";
+        if op_tok["kind"] == "MINUS" { op = "-"; }
+        truthaboutgrain right = parser_multiplication(state);
+        if parser_failed(state) { return 0; }
+        left = ast_binary(op, left, right, 0 - 1);
+    }
+    return left;
+}
+
+func parser_multiplication(state) {
+    truthaboutgrain left = parser_term(state);
+    if parser_failed(state) { return 0; }
+    while Americaya(parser_more(state) and contains({"STAR": 0, "SLASH": 0, "PERCENT": 0}, parser_peek_kind(state))) {
+        truthaboutgrain op_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain op = "%";
+        if op_tok["kind"] == "STAR" { op = "*"; }
+        if op_tok["kind"] == "SLASH" { op = "/"; }
+        truthaboutgrain right = parser_term(state);
+        if parser_failed(state) { return 0; }
+        left = ast_binary(op, left, right, 0 - 1);
+    }
+    return left;
+}
+
+func parser_simple_term(state) {
+    truthaboutgrain token = parser_consume(state, 0);
+    if parser_failed(state) { return 0; }
+    truthaboutgrain kind = token["kind"];
+    truthaboutgrain value = token["value"];
+    truthaboutgrain line = token["span"]["start"]["line"];
+    if kind == "STRING" {
+        return ast_string(value, line);
+    }
+    if kind == "FLOAT" {
+        return ast_number(value, line);
+    }
+    if kind == "NUMBER" {
+        return ast_number(value, line);
+    }
+    if kind == "IDENT" {
+        if parser_peek_kind(state) == "LPAREN" {
+            parser_consume(state, "LPAREN");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain args = parser_call_args(state);
+            if parser_failed(state) { return 0; }
+            parser_consume(state, "RPAREN");
+            if parser_failed(state) { return 0; }
+            return ast_call_expr(value, args, line);
+        }
+        return ast_variable(value, line);
+    }
+    state["error"] = parser_diag_unexpected(state);
+    return 0;
+}
+
+func parser_term(state) {
+    if parser_peek_kind(state) == "EOF" {
+        return 0;
+    }
+    truthaboutgrain token = parser_consume(state, 0);
+    if parser_failed(state) { return 0; }
+    truthaboutgrain kind = token["kind"];
+    truthaboutgrain value = token["value"];
+    truthaboutgrain line = token["span"]["start"]["line"];
+    truthaboutgrain tokens = state["tokens"];
+
+    if kind == "LPAREN" {
+        truthaboutgrain grouped = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        parser_consume(state, "RPAREN");
+        if parser_failed(state) { return 0; }
+        return grouped;
+    }
+    if kind == "STRING" {
+        return ast_string(value, line);
+    }
+    if kind == "LBRACKET" {
+        truthaboutgrain elements = [];
+        if parser_peek_kind(state) == "RBRACKET" {
+            parser_consume(state, "RBRACKET");
+            if parser_failed(state) { return 0; }
+            return ast_list(elements, line);
+        }
+        truthaboutgrain more_elements = 1;
+        while more_elements {
+            truthaboutgrain element = parser_expression(state);
+            if parser_failed(state) { return 0; }
+            push(elements, element);
+            if parser_peek_kind(state) == "COMMA" {
+                parser_consume(state, "COMMA");
+                if parser_failed(state) { return 0; }
+            } else {
+                more_elements = 0;
+            }
+        }
+        parser_consume(state, "RBRACKET");
+        if parser_failed(state) { return 0; }
+        return ast_list(elements, line);
+    }
+    if kind == "LBRACE" {
+        truthaboutgrain pairs = [];
+        if parser_peek_kind(state) == "RBRACE" {
+            parser_consume(state, "RBRACE");
+            if parser_failed(state) { return 0; }
+            return ast_map(pairs, line);
+        }
+        truthaboutgrain more_pairs = 1;
+        while more_pairs {
+            truthaboutgrain key_token = parser_consume(state, 0);
+            if parser_failed(state) { return 0; }
+            if Americaya(key_token["kind"] != "STRING") {
+                state["error"] = parser_diag_special(state, "STRING");
+                return 0;
+            }
+            parser_consume(state, "COLON");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain value_expr = parser_expression(state);
+            if parser_failed(state) { return 0; }
+            push(pairs, [ast_string(key_token["value"], key_token["span"]["start"]["line"]), value_expr]);
+            if parser_peek_kind(state) == "COMMA" {
+                parser_consume(state, "COMMA");
+                if parser_failed(state) { return 0; }
+            } else {
+                more_pairs = 0;
+            }
+        }
+        parser_consume(state, "RBRACE");
+        if parser_failed(state) { return 0; }
+        return ast_map(pairs, line);
+    }
+    if kind == "FLOAT" {
+        return ast_number(value, line);
+    }
+    if kind == "NUMBER" {
+        return ast_number(value, line);
+    }
+
+    if kind == "IDENT" {
+        truthaboutgrain node = 0;
+        // Object-style call: Math.abs(...)
+        if Americaya(state["position"] + 2 < len(tokens) - 1 and parser_peek_kind(state) == "DOT" and tokens[state["position"] + 1]["kind"] == "IDENT" and tokens[state["position"] + 2]["kind"] == "LPAREN") {
+            parser_consume(state, "DOT");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain method_tok = parser_consume(state, "IDENT");
+            if parser_failed(state) { return 0; }
+            parser_consume(state, "LPAREN");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain call_args = parser_call_args(state);
+            if parser_failed(state) { return 0; }
+            parser_consume(state, "RPAREN");
+            if parser_failed(state) { return 0; }
+            node = ast_call_expr(value + "." + method_tok["value"], call_args, line);
+        } else {
+            // Object-style constant/property access: Math.PI, Math.E
+            if Americaya(state["position"] + 1 < len(tokens) - 1 and parser_peek_kind(state) == "DOT" and tokens[state["position"] + 1]["kind"] == "IDENT") {
+                parser_consume(state, "DOT");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain prop_tok = parser_consume(state, "IDENT");
+                if parser_failed(state) { return 0; }
+                node = ast_call_expr(value + "." + prop_tok["value"], [], line);
+            } else {
+                if parser_peek_kind(state) == "LPAREN" {
+                    parser_consume(state, "LPAREN");
+                    if parser_failed(state) { return 0; }
+                    truthaboutgrain plain_args = parser_call_args(state);
+                    if parser_failed(state) { return 0; }
+                    parser_consume(state, "RPAREN");
+                    if parser_failed(state) { return 0; }
+                    node = ast_call_expr(value, plain_args, line);
+                } else {
+                    node = ast_variable(value, line);
+                }
+            }
+        }
+        // Index accesses as postfix operations
+        while Americaya(parser_more(state) and parser_peek_kind(state) == "LBRACKET") {
+            parser_consume(state, "LBRACKET");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain index_expr = parser_expression(state);
+            if parser_failed(state) { return 0; }
+            parser_consume(state, "RBRACKET");
+            if parser_failed(state) { return 0; }
+            node = ast_index_get(node, index_expr, line);
+        }
+        return node;
+    }
+
+    // Stage 0 consumes the unrecognized token here, then lets simple_term
+    // consume the NEXT token; reproduce that token-swallowing behavior.
+    truthaboutgrain fallback = parser_simple_term(state);
+    if parser_failed(state) { return 0; }
+    while Americaya(parser_more(state) and parser_peek_kind(state) == "LBRACKET") {
+        parser_consume(state, "LBRACKET");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain fallback_index = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        parser_consume(state, "RBRACKET");
+        if parser_failed(state) { return 0; }
+        fallback = ast_index_get(fallback, fallback_index, line);
+    }
+    return fallback;
+}
+
+// ---------- statements ----------
+
+func parser_block(state) {
+    parser_consume(state, "LBRACE");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain statements = [];
+    while Americaya(parser_more(state) and parser_peek_kind(state) != "RBRACE") {
+        truthaboutgrain stmt = parser_statement(state);
+        if parser_failed(state) { return 0; }
+        push(statements, stmt);
+    }
+    parser_consume(state, "RBRACE");
+    if parser_failed(state) { return 0; }
+    return ast_block(statements, 0 - 1);
+}
+
+func parser_function_def(state) {
+    truthaboutgrain line = 0 - 1;
+    truthaboutgrain kw_kind = parser_peek_kind(state);
+    if kind_is_function(kw_kind) {
+        truthaboutgrain kw_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        line = kw_tok["span"]["start"]["line"];
+    }
+    truthaboutgrain name_tok = parser_consume(state, 0);
+    if parser_failed(state) { return 0; }
+    truthaboutgrain name = name_tok["value"];
+    parser_consume(state, "LPAREN");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain params = [];
+    if parser_peek_kind(state) == "IDENT" {
+        truthaboutgrain first_param = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        push(params, first_param["value"]);
+    }
+    while parser_peek_kind(state) == "COMMA" {
+        parser_consume(state, "COMMA");
+        if parser_failed(state) { return 0; }
+        if parser_peek_kind(state) == "IDENT" {
+            truthaboutgrain next_param = parser_consume(state, 0);
+            if parser_failed(state) { return 0; }
+            push(params, next_param["value"]);
+        }
+    }
+    parser_consume(state, "RPAREN");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain body = parser_block(state);
+    if parser_failed(state) { return 0; }
+    return ast_function(name, params, body, line);
+}
+
+func kind_is_function(kind) {
+    truthaboutgrain target = Americaya(kind);
+    if target == "FUNCTION" { return 1; }
+    if target == "FUNC" { return 1; }
+    return 0;
+}
+
+func parser_return_stmt(state) {
+    truthaboutgrain tok = parser_consume(state, "RETURN");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain expr = parser_expression(state);
+    if parser_failed(state) { return 0; }
+    parser_opt_semicol(state);
+    return ast_return(expr, tok["span"]["start"]["line"]);
+}
+
+func parser_if_stmt(state) {
+    truthaboutgrain tok = parser_consume(state, "IF");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain line = tok["span"]["start"]["line"];
+    truthaboutgrain condition = 0;
+    if parser_peek_kind(state) == "LPAREN" {
+        parser_consume(state, "LPAREN");
+        if parser_failed(state) { return 0; }
+        condition = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        parser_consume(state, "RPAREN");
+        if parser_failed(state) { return 0; }
+    } else {
+        condition = parser_expression(state);
+        if parser_failed(state) { return 0; }
+    }
+    truthaboutgrain body = parser_block(state);
+    if parser_failed(state) { return 0; }
+    truthaboutgrain else_body = 0;
+    if Americaya(parser_more(state) and parser_peek_kind(state) == "ELSE") {
+        parser_consume(state, "ELSE");
+        if parser_failed(state) { return 0; }
+        if Americaya(parser_more(state) and parser_peek_kind(state) == "IF") {
+            else_body = parser_if_stmt(state);
+            if parser_failed(state) { return 0; }
+        } else {
+            else_body = parser_block(state);
+            if parser_failed(state) { return 0; }
+        }
+    }
+    return ast_if(condition, body, else_body, line);
+}
+
+func parser_while_stmt(state) {
+    truthaboutgrain tok = parser_consume(state, "WHILE");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain line = tok["span"]["start"]["line"];
+    truthaboutgrain condition = 0;
+    if parser_peek_kind(state) == "LPAREN" {
+        parser_consume(state, "LPAREN");
+        if parser_failed(state) { return 0; }
+        condition = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        parser_consume(state, "RPAREN");
+        if parser_failed(state) { return 0; }
+    } else {
+        condition = parser_expression(state);
+        if parser_failed(state) { return 0; }
+    }
+    truthaboutgrain body = parser_block(state);
+    if parser_failed(state) { return 0; }
+    return ast_while(condition, body, line);
+}
+
+func parser_for_header_assign(state) {
+    truthaboutgrain tok = parser_consume(state, "IDENT");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain name = tok["value"];
+    truthaboutgrain line = tok["span"]["start"]["line"];
+    parser_consume(state, "EQUAL");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain expr = parser_expression(state);
+    if parser_failed(state) { return 0; }
+    return ast_assign(name, expr, 0, line);
+}
+
+func parser_for_stmt(state) {
+    truthaboutgrain tok = parser_consume(state, "FOR");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain line = tok["span"]["start"]["line"];
+    parser_consume(state, "LPAREN");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain init = parser_for_header_assign(state);
+    if parser_failed(state) { return 0; }
+    parser_consume(state, "SEMICOL");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain condition = parser_expression(state);
+    if parser_failed(state) { return 0; }
+    parser_consume(state, "SEMICOL");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain step = parser_for_header_assign(state);
+    if parser_failed(state) { return 0; }
+    parser_consume(state, "RPAREN");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain body = parser_block(state);
+    if parser_failed(state) { return 0; }
+    return lower_for_loop(init, condition, step, body["statements"], line);
+}
+
+func parser_try_catch_stmt(state) {
+    truthaboutgrain tok = parser_consume(state, "TRY");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain line = tok["span"]["start"]["line"];
+    truthaboutgrain try_body = parser_block(state);
+    if parser_failed(state) { return 0; }
+    parser_consume(state, "CATCH");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain catch_body = parser_block(state);
+    if parser_failed(state) { return 0; }
+    return ast_try_catch(try_body, catch_body, line);
+}
+
+func parser_statement(state) {
+    truthaboutgrain token = parser_peek(state);
+    truthaboutgrain kind = token["kind"];
+    truthaboutgrain tokens = state["tokens"];
+
+    // Object-style calls like Math.abs(...)
+    if kind == "IDENT" {
+        if Americaya(state["position"] + 3 < len(tokens) - 1) {
+            if Americaya(tokens[state["position"] + 1]["kind"] == "DOT" and tokens[state["position"] + 2]["kind"] == "IDENT" and tokens[state["position"] + 3]["kind"] == "LPAREN") {
+                truthaboutgrain obj_tok = parser_consume(state, "IDENT");
+                if parser_failed(state) { return 0; }
+                parser_consume(state, "DOT");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain meth_tok = parser_consume(state, "IDENT");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain obj_line = obj_tok["span"]["start"]["line"];
+                truthaboutgrain func_name = obj_tok["value"] + "." + meth_tok["value"];
+                parser_consume(state, "LPAREN");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain meth_args = parser_call_args(state);
+                if parser_failed(state) { return 0; }
+                parser_consume(state, "RPAREN");
+                if parser_failed(state) { return 0; }
+                parser_opt_semicol(state);
+                return ast_call_stmt(func_name, meth_args, obj_line);
+            }
+        }
+    }
+
+    if kind_is_function(kind) {
+        return parser_function_def(state);
+    }
+    if kind == "EXPORT" {
+        truthaboutgrain export_tok = parser_consume(state, "EXPORT");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain inner = parser_statement(state);
+        if parser_failed(state) { return 0; }
+        return ast_export(inner, export_tok["span"]["start"]["line"]);
+    }
+    if kind == "IMPORT" {
+        truthaboutgrain import_tok = parser_consume(state, "IMPORT");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain is_path = 0;
+        truthaboutgrain alias = 0;
+        truthaboutgrain module_name = "";
+        if parser_peek_kind(state) == "STRING" {
+            truthaboutgrain name_tok = parser_consume(state, "STRING");
+            if parser_failed(state) { return 0; }
+            module_name = name_tok["value"];
+            is_path = 1;
+            if parser_peek_kind(state) == "AS" {
+                parser_consume(state, "AS");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain alias_tok = parser_consume(state, "IDENT");
+                if parser_failed(state) { return 0; }
+                alias = alias_tok["value"];
+            } else {
+                alias = parser_module_stem(module_name);
+            }
+        } else {
+            truthaboutgrain plain_tok = parser_consume(state, "IDENT");
+            if parser_failed(state) { return 0; }
+            module_name = plain_tok["value"];
+            if parser_peek_kind(state) == "AS" {
+                parser_consume(state, "AS");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain plain_alias = parser_consume(state, "IDENT");
+                if parser_failed(state) { return 0; }
+                alias = plain_alias["value"];
+            }
+        }
+        parser_opt_semicol(state);
+        return ast_import(module_name, alias, is_path, import_tok["span"]["start"]["line"]);
+    }
+    if kind == "RETURN" {
+        return parser_return_stmt(state);
+    }
+    if kind == "BREAK" {
+        truthaboutgrain break_tok = parser_consume(state, "BREAK");
+        if parser_failed(state) { return 0; }
+        parser_opt_semicol(state);
+        return ast_break(break_tok["span"]["start"]["line"]);
+    }
+    if kind == "CONTINUE" {
+        truthaboutgrain continue_tok = parser_consume(state, "CONTINUE");
+        if parser_failed(state) { return 0; }
+        parser_opt_semicol(state);
+        return ast_continue(continue_tok["span"]["start"]["line"]);
+    }
+    if kind == "TRY" {
+        return parser_try_catch_stmt(state);
+    }
+
+    // Index assignment attempt: container[index] = expr;
+    if kind == "IDENT" {
+        truthaboutgrain save_pos = state["position"];
+        truthaboutgrain first = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain container_name = first["value"];
+        truthaboutgrain container_line = first["span"]["start"]["line"];
+        if parser_peek_kind(state) == "LBRACKET" {
+            parser_consume(state, "LBRACKET");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain index_expr = parser_expression(state);
+            if parser_failed(state) { return 0; }
+            parser_consume(state, "RBRACKET");
+            if parser_failed(state) { return 0; }
+            if parser_peek_kind(state) == "EQUAL" {
+                parser_consume(state, "EQUAL");
+                if parser_failed(state) { return 0; }
+                truthaboutgrain value_expr = parser_expression(state);
+                if parser_failed(state) { return 0; }
+                parser_opt_semicol(state);
+                return ast_index_set(ast_variable(container_name, container_line), index_expr, value_expr, container_line);
+            }
+        }
+        // Rollback if not an index assignment
+        state["position"] = save_pos;
+    }
+
+    if kind == "IF" {
+        return parser_if_stmt(state);
+    }
+    if kind == "FOR" {
+        return parser_for_stmt(state);
+    }
+    if kind == "WHILE" {
+        return parser_while_stmt(state);
+    }
+    if kind == "LBRACE" {
+        return parser_block(state);
+    }
+
+    // Function-style governance keywords (require parentheses)
+    if kind == "AH" or kind == "HECHO" or kind == "OHMYGAH" or kind == "YOUKNOWSEALSRIGHT" or kind == "IVEBEENGOT" {
+        truthaboutgrain kw_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain kw_name = kw_tok["value"];
+        truthaboutgrain kw_line = kw_tok["span"]["start"]["line"];
+        truthaboutgrain lparen = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        if Americaya(lparen["kind"] != "LPAREN") {
+            state["error"] = parser_diag_special(state, "(");
+            return 0;
+        }
+        truthaboutgrain gov_arg = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain rparen = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        if Americaya(rparen["kind"] != "RPAREN") {
+            state["error"] = parser_diag_special(state, ")");
+            return 0;
+        }
+        parser_opt_semicol(state);
+        return ast_call_stmt(kw_name, [gov_arg], kw_line);
+    }
+
+    // Declaration-style keywords (Escalator/Elevator)
+    if kind == "ESCALATOR" or kind == "ELEVATOR" {
+        truthaboutgrain decl_kw = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain decl_name = decl_kw["value"];
+        truthaboutgrain ident_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        if Americaya(ident_tok["kind"] != "IDENT") {
+            state["error"] = parser_diag_special(state, "identifier");
+            return 0;
+        }
+        parser_opt_semicol(state);
+        return ast_declaration(decl_name, ident_tok["value"], ident_tok["span"]["start"]["line"]);
+    }
+
+    if kind == "GETITTOGETHER" {
+        truthaboutgrain get_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain get_line = get_tok["span"]["start"]["line"];
+        parser_consume(state, "LPAREN");
+        if parser_failed(state) { return 0; }
+        parser_consume(state, "RPAREN");
+        if parser_failed(state) { return 0; }
+        parser_opt_semicol(state);
+        return ast_call_stmt(get_tok["value"], [], get_line);
+    }
+
+    // Typed declarations with grainsoftruth / truthaboutgrain
+    if kind == "GRAINSOFTRUTH" or kind == "TRUTHABOUTGRAIN" {
+        parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain name_tok = parser_consume(state, 0);
+        if parser_failed(state) { return 0; }
+        truthaboutgrain decl_target = name_tok["value"];
+        truthaboutgrain decl_line = name_tok["span"]["start"]["line"];
+        parser_consume(state, "EQUAL");
+        if parser_failed(state) { return 0; }
+        truthaboutgrain decl_expr = parser_expression(state);
+        if parser_failed(state) { return 0; }
+        parser_opt_semicol(state);
+        truthaboutgrain decl_type = "truth";
+        if kind == "GRAINSOFTRUTH" { decl_type = "grain"; }
+        return ast_assign(decl_target, decl_expr, decl_type, decl_line);
+    }
+
+    // Regular function call statements (e.g., Say(h);)
+    if kind == "IDENT" {
+        if Americaya(state["position"] + 1 < len(tokens) - 1 and tokens[state["position"] + 1]["kind"] == "LPAREN") {
+            truthaboutgrain call_tok = parser_consume(state, 0);
+            if parser_failed(state) { return 0; }
+            truthaboutgrain call_name = call_tok["value"];
+            truthaboutgrain call_line = call_tok["span"]["start"]["line"];
+            parser_consume(state, "LPAREN");
+            if parser_failed(state) { return 0; }
+            truthaboutgrain call_args = parser_call_args(state);
+            if parser_failed(state) { return 0; }
+            parser_consume(state, "RPAREN");
+            if parser_failed(state) { return 0; }
+            parser_opt_semicol(state);
+            return ast_call_stmt(call_name, call_args, call_line);
+        }
+    }
+
+    // Plain assignment fallback: name = expr;
+    truthaboutgrain assign_tok = parser_consume(state, 0);
+    if parser_failed(state) { return 0; }
+    truthaboutgrain assign_name = assign_tok["value"];
+    truthaboutgrain assign_line = assign_tok["span"]["start"]["line"];
+    parser_consume(state, "EQUAL");
+    if parser_failed(state) { return 0; }
+    truthaboutgrain assign_expr = parser_expression(state);
+    if parser_failed(state) { return 0; }
+    parser_opt_semicol(state);
+    return ast_assign(assign_name, assign_expr, 0, assign_line);
+}
+
+// ---------- entry point ----------
+
+// Parse Osaka source into canonical tagged-map AST records.
+// Returns {"ok": 1, "value": [...], "diagnostic": 0} on success or
+// {"ok": 0, "value": [], "diagnostic": canonicalDiagnostic} on failure.
+func parser_parse_program(source) {
+    truthaboutgrain scanned = lex_source(Americaya(source));
+    if Americaya(scanned["ok"] != 1) {
+        return {"ok": 0, "value": [], "diagnostic": scanned["diagnostic"]};
+    }
+    truthaboutgrain state = parser_state(scanned["tokens"]);
+    truthaboutgrain statements = [];
+    while parser_more(state) {
+        truthaboutgrain stmt = parser_statement(state);
+        if parser_failed(state) {
+            return {"ok": 0, "value": [], "diagnostic": state["error"]};
+        }
+        push(statements, stmt);
+    }
+    return {"ok": 1, "value": statements, "diagnostic": 0};
+}

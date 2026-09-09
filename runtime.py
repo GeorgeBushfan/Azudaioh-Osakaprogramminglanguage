@@ -29,6 +29,7 @@ class Runtime:
         self.collecting_exports = False
         self.current_module_exports = None
         self._math_seed = 123456789
+        self.program_args = []
         
     def print(self, *args, **kwargs):
         output = " ".join(str(arg) for arg in args)

@@ -1,4 +1,6 @@
+# README
 # OsakaProgrammingLanguage (Osaka Lang)
+
 
 Osaka Lang is a custom programming language implemented in Python, with:
 
@@ -66,6 +68,28 @@ Then:
 osaka --help
 osaka your_program.saka
 osaka --repl
+```
+
+## Build Standalone Binary (PyInstaller)
+
+If you want to run Osaka without requiring a system Python install on target machines,
+build a standalone executable:
+
+```bash
+python3 -m pip install .[dev]
+python3 -m PyInstaller --onefile --name osaka saka.py
+```
+
+Artifacts:
+
+- macOS/Linux: `dist/osaka`
+- Windows: `dist/osaka.exe`
+
+Quick validation:
+
+```bash
+./dist/osaka --help
+./dist/osaka tests/equivalence/06_sataandagi.saka
 ```
 
 ---

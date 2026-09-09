@@ -1,24 +1,32 @@
-from compiler import Compiler
-from parser import Parser
-from lexer import lex
-import sys
+"""Deterministic Osaka bytecode disassembler."""
 
-# Read and parse the test file
-with open('tests/test_fn.saka') as f:
-    source = f.read()
-tokens = lex(source)
-parser = Parser(tokens)
-program = parser.parse()
 
-# Compile the program
-compiler = Compiler()
-bc = compiler.compile_program(program)
+def _print_code(code, indent):
+    for index, (op, arg, line) in enumerate(code):
+        suffix = f" ; line {line}" if line != -1 else ""
+        operand = "" if arg is None else str(arg)
+        print(f"{indent}{index:04d}  {op:<14} {operand}{suffix}")
 
-# Print the bytecode
-print("Bytecode Instructions:")
-for i, (op, arg) in enumerate(bc.code):
-    print(f"{i}: {op} {arg}")
 
-print("\nFunction Table:")
-for name, fn in bc.functions.items():
-    print(f"{name}: {len(fn.params)} parameters")
+def print_bytecode(program):
+    print("CONSTANTS:")
+    for index, value in enumerate(program.consts):
+        print(f"  {index:04d}  {value.kind:<5}  {value.data!r}")
+    print("\nMAIN:")
+    _print_code(program.code, "  ")
+    for name in sorted((program.functions or {}).keys()):
+        function = program.functions[name]
+        print(f"\nFUNCTION {name}({', '.join(function.params)}):")
+        print("  CONSTANTS:")
+        for index, value in enumerate(function.program.consts):
+            print(f"    {index:04d}  {value.kind:<5}  {value.data!r}")
+        print("  CODE:")
+        _print_code(function.program.code, "    ")
+
+
+if __name__ == "__main__":
+    import argparse
+    from sbc import load
+    parser = argparse.ArgumentParser(description="Disassemble an Osaka SBC1 file")
+    parser.add_argument("file")
+    print_bytecode(load(parser.parse_args().file))

@@ -5,7 +5,8 @@ class Node:
         self.line = line
 
 class Block(Node):
-    def __init__(self, statements):
+    def __init__(self, statements, line=-1):
+        super().__init__(line)
         self.statements = statements
 
 
@@ -15,37 +16,18 @@ class MapLiteral(Node):
         self.pairs = pairs  # list of (key_node, value_node)
 
 class IndexAssign(Node):
-    def __init__(self, container, index, value):
+    def __init__(self, container, index, value, line=-1):
+        super().__init__(line)
         self.container = container
         self.index = index
         self.value = value
 
-
-class If(Node):
-    def __init__(self, condition, body, else_body=None, line=-1):
-        super().__init__(line)
-        self.condition = condition
-        self.body = body
-        self.else_body = else_body
-
-class While(Node):
-    def __init__(self, condition, body, line=-1):
-        super().__init__(line)
-        self.condition = condition
-        self.body = body
 
 class TryCatch(Node):
     def __init__(self, try_body, catch_body, line=-1):
         super().__init__(line)
         self.try_body = try_body
         self.catch_body = catch_body
-
-class Compare(Node):
-    def __init__(self, left, op, right, line=-1):
-        super().__init__(line)
-        self.left = left
-        self.op = op
-        self.right = right
 
 class Number(Node):
     def __init__(self, value, line=-1):
@@ -84,14 +66,10 @@ class Call(Node):
         self.args = args             # List of argument expressions
 
 class Declaration(Node):
-    def __init__(self, decl_type, name):
+    def __init__(self, decl_type, name, line=-1):
+        super().__init__(line)
         self.decl_type = decl_type   # "Escalator" or "Elevator"
         self.name = name
-
-class Block(Node):
-    def __init__(self, statements):
-        self.statements = statements
-
 
 class If(Node):
     def __init__(self, condition, body, else_body=None, line=-1):
@@ -117,7 +95,8 @@ class Compare(Node):
 
 
 class FunctionDef(Node):
-    def __init__(self, name, params, body):
+    def __init__(self, name, params, body, line=-1):
+        super().__init__(line)
         self.name = name
         self.params = params        # list of parameter names
         self.body = body            # Block
@@ -131,7 +110,8 @@ class CallExpr(Node):
 
 
 class Return(Node):
-    def __init__(self, expr):
+    def __init__(self, expr, line=-1):
+        super().__init__(line)
         self.expr = expr
 
 class String(Node):

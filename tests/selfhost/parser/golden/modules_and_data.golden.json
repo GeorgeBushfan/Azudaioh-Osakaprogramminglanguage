@@ -1,0 +1,154 @@
+[
+ {
+  "alias": "mod",
+  "is_path": 1,
+  "line": 2,
+  "module": "./modules/mod_values.saka",
+  "tag": "import"
+ },
+ {
+  "decl_kind": "truth",
+  "expr": {
+   "line": 4,
+   "pairs": [
+    [
+     {
+      "line": 4,
+      "tag": "string",
+      "value": "name"
+     },
+     {
+      "line": 4,
+      "tag": "string",
+      "value": "saka"
+     }
+    ],
+    [
+     {
+      "line": 4,
+      "tag": "string",
+      "value": "values"
+     },
+     {
+      "elements": [
+       {
+        "line": 4,
+        "tag": "number",
+        "value": 1
+       },
+       {
+        "line": 4,
+        "tag": "number",
+        "value": 2.5
+       },
+       {
+        "line": 4,
+        "tag": "string",
+        "value": "three"
+       }
+      ],
+      "line": 4,
+      "tag": "list"
+     }
+    ]
+   ],
+   "tag": "map"
+  },
+  "line": 4,
+  "name": "config",
+  "tag": "assign"
+ },
+ {
+  "container": {
+   "line": 5,
+   "name": "config",
+   "tag": "variable"
+  },
+  "index": {
+   "line": 5,
+   "tag": "string",
+   "value": "extra"
+  },
+  "line": 5,
+  "tag": "index_set",
+  "value": {
+   "line": 5,
+   "name": "true",
+   "tag": "variable"
+  }
+ },
+ {
+  "catch": {
+   "line": -1,
+   "statements": [
+    {
+     "args": [
+      {
+       "args": [],
+       "line": 9,
+       "name": "mod.greeting",
+       "tag": "call_expr"
+      }
+     ],
+     "line": 9,
+     "name": "Say",
+     "tag": "call_stmt"
+    }
+   ],
+   "tag": "block"
+  },
+  "line": 6,
+  "tag": "try_catch",
+  "try": {
+   "line": -1,
+   "statements": [
+    {
+     "args": [
+      {
+       "container": {
+        "line": 7,
+        "name": "config",
+        "tag": "variable"
+       },
+       "index": {
+        "line": 7,
+        "tag": "string",
+        "value": "missing"
+       },
+       "line": 7,
+       "tag": "index_get"
+      }
+     ],
+     "line": 7,
+     "name": "Say",
+     "tag": "call_stmt"
+    }
+   ],
+   "tag": "block"
+  }
+ },
+ {
+  "args": [
+   {
+    "line": 11,
+    "name": "config",
+    "tag": "variable"
+   }
+  ],
+  "line": 11,
+  "name": "Ah",
+  "tag": "call_stmt"
+ },
+ {
+  "args": [
+   {
+    "line": 12,
+    "name": "total",
+    "tag": "variable"
+   }
+  ],
+  "line": 12,
+  "name": "Hecho",
+  "tag": "call_stmt"
+ }
+]

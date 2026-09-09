@@ -109,6 +109,37 @@ General propagation behavior:
 - `float` numeric literals currently evaluate as `grain`; integer literals as `truth`
 - List/map literals are `truth` only if all contained evaluated elements are `truth`
 
+### 4.1 Truth/Grain Propagation Rules (Canonical)
+
+This section is the quick-reference for kind propagation.
+
+| Construct | Result kind |
+|---|---|
+| `truthaboutgrain x = expr` | `truth` (forced by declaration) |
+| `grainsoftruth x = expr` | `grain` (forced by declaration) |
+| `x = expr` (existing variable) | keeps existing variable kind |
+| `x = expr` (new variable) | expression kind |
+| Integer literal | `truth` |
+| Float literal | `grain` |
+| String literal | `truth` |
+| Variable read | stored variable kind |
+| `a + b`, `a - b`, `a * b`, `a / b`, `a % b` | `truth` iff both operands are `truth`; else `grain` |
+| `a == b`, `a != b`, `a < b`, `a <= b`, `a > b`, `a >= b` | `truth` iff both operands are `truth`; else `grain` |
+| `not x` | preserves `x` kind |
+| `x and y`, `x or y` | short-circuit; final kind is `truth` iff both sides are `truth`; else `grain` |
+| List literal `[e1, e2, ...]` | `truth` iff all element kinds are `truth`; else `grain` |
+| Map literal `{"k": v, ...}` | `truth` iff all value kinds are `truth`; else `grain` |
+| Index read `container[i]` | container kind |
+| Index write of `grain` value | may downgrade container variable kind to `grain` |
+| Function parameters (inside function scope) | bound as `grain` by current runtime rule |
+| Function return | return expression kind |
+| `Americaya(x)` | `truth` (promotion) |
+
+Notes:
+
+- Kind propagation is separate from mutation/governance diagnostics (`Ah`, `Hecho`, `Ivebeengot`, etc.).
+- `Say(grain)` warns, but does not itself change kind propagation.
+
 ---
 
 ## 5. Control Flow Semantics
@@ -186,6 +217,10 @@ Core built-ins:
 - `slice(list_or_string, start, end)`
 - `push(list, value)`
 - `pop(list)`
+- `Args()` — returns the arguments supplied after `--` to the running Osaka
+  program as a truth-kind list of strings.
+- `Panic(message)` — terminates the current run with a normalized runtime
+  error. Compiler tools use it to report fatal diagnostics and a non-zero exit.
 
 Math object built-ins:
 

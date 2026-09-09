@@ -13,6 +13,11 @@ authors = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+dev = [
+  "pyinstaller>=6.0",
+]
+
 [project.scripts]
 osaka = "saka:main"
 
@@ -21,9 +26,12 @@ py-modules = [
   "arg_parser",
   "ast_nodes",
   "bytecode",
+  "builtin_registry",
+  "bootstrap_profile",
   "compiler",
   "equiv_lock",
   "equiv_test",
+  "frontend_contract",
   "interpreter",
   "lexer",
   "parser",
@@ -32,6 +40,9 @@ py-modules = [
   "run_vm",
   "runtime",
   "saka",
+  "sbc",
+  "selfhost_bundle",
+  "selfhost_harness",
   "verifier",
   "verify_tests",
   "vm",

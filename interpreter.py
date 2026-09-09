@@ -1,14 +1,13 @@
 # interpreter.py
 
 from ast_nodes import *
-import io
-import sys
 import math
 import os
 
 from lexer import lex
 from parser import Parser
 from runtime import Runtime as CoreRuntime
+from builtin_registry import is_builtin, validate_builtin_arity
 
 
 class ReturnSignal(Exception):
@@ -23,60 +22,6 @@ class BreakSignal(Exception):
 
 class ContinueSignal(Exception):
     pass
-
-
-class Runtime:
-    def __init__(self):
-        self.vars = {}
-        self.var_kinds = {}
-        self.functions = {}
-        self.acknowledged = set()
-        self.completed = set()
-        self.assumed = set()
-        self.legacy = set()
-        self.warnings = []  # list of warning messages
-        self.errors = []    # list of error messages
-        self.stdout = io.StringIO()
-        self.stderr = io.StringIO()
-        self.has_unresolved_grain = False
-        self.context_level = 0
-        self.execution_traces = []  # store execution traces
-        self.initialised = set()    # track initialized variables
-
-    def push_scope(self):
-        # Create a new scope by saving current state
-        self.vars = self.vars.copy()
-        self.var_kinds = self.var_kinds.copy()
-
-    def pop_scope(self):
-        # Revert to previous scope (simplified for example)
-        pass
-
-    def set_var(self, name, value):
-        self.vars[name] = value
-
-    def get_var(self, name):
-        return self.vars.get(name, 0)  # default to 0
-
-    def warn(self, message):
-        self.warnings.append(message)
-        print(f"Warning: {message}", file=sys.stderr)
-
-    def info(self, message):
-        print(f"Info: {message}", file=sys.stdout)
-
-    def capture_trace(self, line):
-        """Capture current execution state as a trace"""
-        trace = {
-            "line": line,
-            "variables": {k: (v, self.var_kinds.get(k, "grain")) 
-                         for k, v in self.vars.items()},
-            "warnings": self.warnings.copy(),
-            "errors": self.errors.copy(),
-            "stdout": self.stdout.getvalue(),
-            "stderr": self.stderr.getvalue()
-        }
-        self.execution_traces.append(trace)
 
 
 class Interpreter:
@@ -186,7 +131,7 @@ class Interpreter:
         
         for stmt in program:
             # Capture trace before executing statement
-            if hasattr(stmt, 'line'):
+            if getattr(stmt, "line", -1) != -1:
                 current_function = None
                 for scope in reversed(self.rt.scopes):
                     if 'function_name' in scope:
@@ -207,7 +152,7 @@ class Interpreter:
                 raise RuntimeError("continue used outside loop")
             
             # Capture trace after executing statement
-            if hasattr(stmt, 'line'):
+            if getattr(stmt, "line", -1) != -1:
                 current_function = None
                 for scope in reversed(self.rt.scopes):
                     if 'function_name' in scope:
@@ -227,7 +172,7 @@ class Interpreter:
 
     def execute(self, node):
         # Capture trace before executing node
-        if hasattr(node, 'line'):
+        if getattr(node, "line", -1) != -1:
             self.rt.capture_trace(node.line)
         
         # Function definition: just register it
@@ -715,6 +660,17 @@ class Interpreter:
         # Ensure args is always treated as a list
         arg_list = node.args if isinstance(node.args, list) else [node.args]
 
+        if is_builtin(node.name):
+            validate_builtin_arity(node.name, len(arg_list))
+
+        if name == "Args":
+            self.rt.last_value = (list(getattr(self.rt, "program_args", [])), "truth")
+            return self.rt.last_value
+
+        if name == "Panic":
+            message, _ = self.eval(arg_list[0])
+            raise RuntimeError(f"Panic: {message}")
+
         if name.startswith("Math."):
             self._eval_math_builtin(name, arg_list, getattr(node, "line", -1))
             return
@@ -1079,6 +1035,16 @@ class Interpreter:
 
     def call_function(self, call: CallExpr):
         name = self._resolve_std_name(call.name)
+
+        if is_builtin(call.name):
+            validate_builtin_arity(call.name, len(call.args))
+
+        if name == "Args":
+            return list(getattr(self.rt, "program_args", [])), "truth"
+
+        if name == "Panic":
+            message, _ = self.eval(call.args[0])
+            raise RuntimeError(f"Panic: {message}")
 
         if name in self.rt.imported_module_functions:
             fn_info = self.rt.imported_module_functions[name]

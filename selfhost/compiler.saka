@@ -1,0 +1,732 @@
+// Self-hosted bytecode compiler: 1:1 port of Stage 0 compiler.py.
+// Consumes the canonical tagged-map AST (selfhost/ast.saka records) and
+// produces the bytecode IR (selfhost/bytecode.saka records). Compilation
+// errors (unsupported ops, break/continue outside loops, export misuse,
+// builtin arity mismatches) are recorded in state["error"] as
+// {"code", "message", "line"} diagnostics, matching the parser envelope.
+
+// ---------- builtin registry (mirrors builtin_registry.py) ----------
+
+func cp_public_builtin_arities() {
+    return {
+        "Ah": 1, "Americaya": 1, "AppendFile": 2, "Args": 0, "DeleteFile": 1,
+        "FileExists": 1, "Getittogether": 0, "Hecho": 1, "Ivebeengot": 1,
+        "Math.E": 0, "Math.PI": 0, "Math.abs": 1, "Math.ceil": 1, "Math.clamp": 3,
+        "Math.cos": 1, "Math.cosh": 1, "Math.floor": 1, "Math.max": 2, "Math.min": 2,
+        "Math.pow": 2, "Math.random": 0, "Math.round": 1, "Math.sign": 1,
+        "Math.sin": 1, "Math.sinh": 1, "Math.sqrt": 1, "Math.tan": 1, "Math.tanh": 1,
+        "Math.trunc": 1, "Ohmygah": 1, "Panic": 1, "ReadFile": 1, "SataAndagi": 0,
+        "Say": 1, "WriteFile": 2, "contains": 2, "keys": 1, "len": 1, "pop": 1,
+        "push": 2, "slice": 3, "std.contains": 2, "std.keys": 1, "std.len": 1,
+        "std.pop": 1, "std.push": 2, "std.slice": 3, "std.values": 1, "values": 1,
+        "youknowsealsright": 1
+    };
+}
+
+func cp_internal_builtin_arities() {
+    return {
+        "__bool_and__": 2, "__bool_not__": 1, "__float_repr__": 1, "__is_float__": 1,
+        "__json_type__": 1, "__bool_or__": 2,
+        "__capture_trace__": 0, "__export_symbol__": 1, "__force_kind_grain__": 1,
+        "__force_kind_truth__": 1, "__import_file_module__": 2, "__import_module__": 1,
+        "__pop_scope__": 0, "__push_scope__": 0, "__to_bool_preserve_kind__": 1,
+        "__to_truthaboutgrain__": 1
+    };
+}
+
+func cp_builtin_arities() {
+    return {
+        "public": cp_public_builtin_arities(),
+        "internal": cp_internal_builtin_arities()
+    };
+}
+
+func cp_is_builtin(arities, name) {
+    truthaboutgrain target = Americaya(name);
+    if Americaya(contains(arities["public"], target)) { return 1; }
+    if Americaya(contains(arities["internal"], target)) { return 1; }
+    return 0;
+}
+
+// Returns the expected arity, or 0 - 1 when the name is unknown.
+func cp_builtin_arity(arities, name) {
+    truthaboutgrain target = Americaya(name);
+    if Americaya(contains(arities["public"], target)) { return arities["public"][target]; }
+    if Americaya(contains(arities["internal"], target)) { return arities["internal"][target]; }
+    return 0 - 1;
+}
+
+func cp_policy_name_builtins() {
+    return {"Ah": 0, "Hecho": 0, "Ivebeengot": 0, "youknowsealsright": 0};
+}
+
+// Substring probe for "." in a call name. contains() only accepts maps, so
+// scan characters instead; Stage 0 uses the Python "in" operator.
+func cp_has_dot(name) {
+    truthaboutgrain i = 0;
+    while Americaya(i < len(name)) {
+        if Americaya(slice(name, i, i + 1) == ".") { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---------- compiler state ----------
+
+func cp_new_state() {
+    return {
+        "arities": cp_builtin_arities(),
+        "consts": [],
+        "code": [],
+        "functions": {},
+        "function_table": {},
+        "loop_stack": [],
+        "scope_depth": 0,
+        "error": 0
+    };
+}
+
+func cp_failed(state) {
+    return Americaya(state["error"] != 0);
+}
+
+func cp_error(state, message, line) {
+    if Americaya(state["error"] == 0) {
+        state["error"] = {"code": "COMPILE_ERROR", "message": message, "line": line};
+    }
+}
+
+func cp_add_const(state, data, kind) {
+    push(state["consts"], bc_value(data, kind));
+    return len(state["consts"]) - 1;
+}
+
+func cp_emit(state, op, arg, line) {
+    push(state["code"], bc_instr(op, arg, line));
+}
+
+func cp_emit_placeholder(state, op) {
+    push(state["code"], bc_instr(op, 0, 0 - 1));
+    return len(state["code"]) - 1;
+}
+
+func cp_patch(state, instr_index, target_ip) {
+    truthaboutgrain instr = state["code"][instr_index];
+    instr["arg"] = target_ip;
+}
+
+func cp_emit_scope_unwind(state, target_depth) {
+    while Americaya(state["scope_depth"] > target_depth) {
+        cp_emit(state, "CALL_BUILTIN", ["__pop_scope__", 0], 0 - 1);
+        cp_emit(state, "POP", 0, 0 - 1);
+        state["scope_depth"] = state["scope_depth"] - 1;
+    }
+    // compile-time nesting counter is restored by the caller loop above;
+    // note Stage 0 decrements via range() without mutating scope_depth, so
+    // undo the bookkeeping we just did to match exactly.
+    truthaboutgrain depth = state["scope_depth"];
+    state["scope_depth"] = depth;
+}
+
+// ---------- local variable collection ----------
+
+func cp_collect_local_vars(state, node) {
+    truthaboutgrain locals = {};
+    truthaboutgrain tag = Americaya(node["tag"]);
+    if Americaya(tag == "assign") {
+        locals[node["name"]] = 0;
+    }
+    if Americaya(tag == "block") {
+        truthaboutgrain stmts = Americaya(node["statements"]);
+        truthaboutgrain i = 0;
+        while Americaya(i < len(stmts)) {
+            truthaboutgrain inner = cp_collect_local_vars(state, stmts[i]);
+            truthaboutgrain names = Americaya(keys(inner));
+            truthaboutgrain j = 0;
+            while Americaya(j < len(names)) {
+                locals[names[j]] = 0;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+    }
+    if Americaya(tag == "if") {
+        truthaboutgrain from_body = cp_collect_local_vars(state, node["then"]);
+        truthaboutgrain body_names = Americaya(keys(from_body));
+        truthaboutgrain k = 0;
+        while Americaya(k < len(body_names)) {
+            locals[body_names[k]] = 0;
+            k = k + 1;
+        }
+        if Americaya(node["else"] != 0) {
+            truthaboutgrain from_else = cp_collect_local_vars(state, node["else"]);
+            truthaboutgrain else_names = Americaya(keys(from_else));
+            truthaboutgrain m = 0;
+            while Americaya(m < len(else_names)) {
+                locals[else_names[m]] = 0;
+                m = m + 1;
+            }
+        }
+    }
+    if Americaya(tag == "while") {
+        truthaboutgrain from_while = cp_collect_local_vars(state, node["body"]);
+        truthaboutgrain while_names = Americaya(keys(from_while));
+        truthaboutgrain w = 0;
+        while Americaya(w < len(while_names)) {
+            locals[while_names[w]] = 0;
+            w = w + 1;
+        }
+    }
+    if Americaya(tag == "try_catch") {
+        truthaboutgrain from_try = cp_collect_local_vars(state, node["try"]);
+        truthaboutgrain try_names = Americaya(keys(from_try));
+        truthaboutgrain t = 0;
+        while Americaya(t < len(try_names)) {
+            locals[try_names[t]] = 0;
+            t = t + 1;
+        }
+        if Americaya(node["catch"] != 0) {
+            truthaboutgrain from_catch = cp_collect_local_vars(state, node["catch"]);
+            truthaboutgrain catch_names = Americaya(keys(from_catch));
+            truthaboutgrain c = 0;
+            while Americaya(c < len(catch_names)) {
+                locals[catch_names[c]] = 0;
+                c = c + 1;
+            }
+        }
+    }
+    return locals;
+}
+
+// ---------- function definitions ----------
+
+func cp_compile_function_def(state, node) {
+    truthaboutgrain sub = cp_new_state();
+    sub["functions"] = state["functions"];
+    // Seed the sub-compiler with every known signature so forward calls
+    // compile; Stage 0 inserts placeholder FunctionBytecode entries.
+    truthaboutgrain table_names = Americaya(keys(state["function_table"]));
+    truthaboutgrain fi = 0;
+    while Americaya(fi < len(table_names)) {
+        truthaboutgrain fname = table_names[fi];
+        if Americaya(not contains(sub["functions"], fname)) {
+            truthaboutgrain sub_fns = sub["functions"];
+            truthaboutgrain sig = state["function_table"][fname];
+            sub_fns[fname] = bc_function(sig["params"], bc_program([], [], {}));
+        }
+        fi = fi + 1;
+    }
+
+    // Collect all local variables (params + declarations inside the body).
+    truthaboutgrain params = Americaya(node["params"]);
+    truthaboutgrain all_locals = {};
+    truthaboutgrain p = 0;
+    while Americaya(p < len(params)) {
+        all_locals[params[p]] = 0;
+        p = p + 1;
+    }
+    truthaboutgrain body_locals = cp_collect_local_vars(state, node["body"]);
+    truthaboutgrain bl_names = Americaya(keys(body_locals));
+    truthaboutgrain b = 0;
+    while Americaya(b < len(bl_names)) {
+        all_locals[bl_names[b]] = 0;
+        b = b + 1;
+    }
+    truthaboutgrain locals_list = Americaya(keys(all_locals));
+
+    // Declare parameters as local variables (reversed, like Stage 0).
+    truthaboutgrain r = len(params);
+    while Americaya(r > 0) {
+        r = r - 1;
+        cp_emit(sub, "STORE_VAR", params[r], 0 - 1);
+    }
+
+    cp_compile_stmt(sub, node["body"]);
+    if cp_failed(sub) { state["error"] = sub["error"]; return 0; }
+
+    // Add return if missing (None const becomes data 0; Stage 0 uses None,
+    // normalized at test time).
+    truthaboutgrain sub_code = Americaya(sub["code"]);
+    if Americaya(len(sub_code) == 0 or sub_code[len(sub_code) - 1]["op"] != "RET") {
+        truthaboutgrain none_index = cp_add_const(sub, 0, "truth");
+        cp_emit(sub, "PUSH_CONST", none_index, 0 - 1);
+        cp_emit(sub, "RET", 0, 0 - 1);
+    }
+
+    truthaboutgrain fn_rec = bc_function(node["params"], bc_program(sub["consts"], sub["code"], {}));
+    fn_rec["locals"] = locals_list;
+    truthaboutgrain fns = state["functions"];
+    fns[node["name"]] = fn_rec;
+    truthaboutgrain table = state["function_table"];
+    table[node["name"]] = {"params": node["params"]};
+}
+
+// ---------- statements ----------
+
+func cp_compile_stmt(state, node) {
+    truthaboutgrain tag = Americaya(node["tag"]);
+    truthaboutgrain line = node["line"];
+    if Americaya(line != 0 - 1) {
+        cp_emit(state, "TRACE_POINT", 0, line);
+    }
+
+    if tag == "assign" {
+        cp_compile_expr(state, node["expr"]);
+        if cp_failed(state) { return 0; }
+        if Americaya(node["decl_kind"] == "grain") {
+            cp_emit(state, "CALL_BUILTIN", ["__force_kind_grain__", 1], 0 - 1);
+        } else {
+            if Americaya(node["decl_kind"] == "truth") {
+                cp_emit(state, "CALL_BUILTIN", ["__force_kind_truth__", 1], 0 - 1);
+            }
+        }
+        cp_emit(state, "STORE_VAR", node["name"], 0 - 1);
+        return 0;
+    }
+
+    if tag == "return" {
+        cp_compile_expr(state, node["expr"]);
+        if cp_failed(state) { return 0; }
+        cp_emit_scope_unwind(state, 0);
+        cp_emit(state, "RET", 0, 0 - 1);
+        return 0;
+    }
+
+    if tag == "import" {
+        if Americaya(node["is_path"] == 1) {
+            truthaboutgrain mod_idx = cp_add_const(state, node["module"], "truth");
+            truthaboutgrain alias = node["alias"];
+            truthaboutgrain alias_idx = cp_add_const(state, alias, "truth");
+            cp_emit(state, "PUSH_CONST", mod_idx, line);
+            cp_emit(state, "PUSH_CONST", alias_idx, line);
+            cp_emit(state, "CALL_BUILTIN", ["__import_file_module__", 2], line);
+        } else {
+            truthaboutgrain const_index = cp_add_const(state, node["module"], "truth");
+            cp_emit(state, "PUSH_CONST", const_index, line);
+            cp_emit(state, "CALL_BUILTIN", ["__import_module__", 1], line);
+        }
+        cp_emit(state, "POP", 0, line);
+        return 0;
+    }
+
+    if tag == "export" {
+        truthaboutgrain inner = node["node"];
+        if Americaya(inner["tag"] == "assign") {
+            cp_compile_stmt(state, inner);
+            if cp_failed(state) { return 0; }
+            truthaboutgrain name_idx = cp_add_const(state, inner["name"], "truth");
+            cp_emit(state, "PUSH_CONST", name_idx, line);
+            cp_emit(state, "CALL_BUILTIN", ["__export_symbol__", 1], line);
+            cp_emit(state, "POP", 0, line);
+            return 0;
+        }
+        if Americaya(inner["tag"] == "function") {
+            cp_compile_function_def(state, inner);
+            if cp_failed(state) { return 0; }
+            truthaboutgrain fname_idx = cp_add_const(state, inner["name"], "truth");
+            cp_emit(state, "PUSH_CONST", fname_idx, line);
+            cp_emit(state, "CALL_BUILTIN", ["__export_symbol__", 1], line);
+            cp_emit(state, "POP", 0, line);
+            return 0;
+        }
+        cp_error(state, "Compiler: export currently supports only variable assignments/declarations", line);
+        return 0;
+    }
+
+    if tag == "break" {
+        if Americaya(len(state["loop_stack"]) == 0) {
+            cp_error(state, "break used outside loop", line);
+            return 0;
+        }
+        cp_emit_scope_unwind(state, state["loop_stack"][len(state["loop_stack"]) - 1]["scope_depth"]);
+        truthaboutgrain jmp_ix = cp_emit_placeholder(state, "JMP");
+        push(state["loop_stack"][len(state["loop_stack"]) - 1]["break_sites"], jmp_ix);
+        return 0;
+    }
+
+    if tag == "continue" {
+        if Americaya(len(state["loop_stack"]) == 0) {
+            cp_error(state, "continue used outside loop", line);
+            return 0;
+        }
+        cp_emit_scope_unwind(state, state["loop_stack"][len(state["loop_stack"]) - 1]["scope_depth"]);
+        cp_emit(state, "JMP", state["loop_stack"][len(state["loop_stack"]) - 1]["continue_target"], 0 - 1);
+        return 0;
+    }
+
+    if tag == "index_set" {
+        truthaboutgrain base = node["container"]["name"];
+        cp_emit(state, "LOAD_VAR", base, 0 - 1);
+        cp_compile_expr(state, node["index"]);
+        if cp_failed(state) { return 0; }
+        cp_compile_expr(state, node["value"]);
+        if cp_failed(state) { return 0; }
+        cp_emit(state, "INDEX_SET", base, 0 - 1);
+        return 0;
+    }
+
+    if Americaya(tag == "block") {
+        cp_emit(state, "CALL_BUILTIN", ["__push_scope__", 0], line);
+        cp_emit(state, "POP", 0, line);
+        state["scope_depth"] = state["scope_depth"] + 1;
+        truthaboutgrain stmts = Americaya(node["statements"]);
+        truthaboutgrain i = 0;
+        while Americaya(i < len(stmts)) {
+            cp_compile_stmt(state, stmts[i]);
+            if cp_failed(state) { return 0; }
+            i = i + 1;
+        }
+        state["scope_depth"] = state["scope_depth"] - 1;
+        cp_emit(state, "CALL_BUILTIN", ["__pop_scope__", 0], line);
+        cp_emit(state, "POP", 0, line);
+        return 0;
+    }
+
+    if tag == "if" {
+        cp_compile_expr(state, node["condition"]);
+        if cp_failed(state) { return 0; }
+        truthaboutgrain jmp_false_ix = cp_emit_placeholder(state, "JMP_IF_FALSE");
+        cp_compile_stmt(state, node["then"]);
+        if cp_failed(state) { return 0; }
+        if Americaya(node["else"] != 0) {
+            truthaboutgrain jmp_end_ix = cp_emit_placeholder(state, "JMP");
+            cp_patch(state, jmp_false_ix, len(state["code"]));
+            cp_compile_stmt(state, node["else"]);
+            if cp_failed(state) { return 0; }
+            cp_patch(state, jmp_end_ix, len(state["code"]));
+        } else {
+            cp_patch(state, jmp_false_ix, len(state["code"]));
+        }
+        return 0;
+    }
+
+    if tag == "while" {
+        truthaboutgrain loop_start = len(state["code"]);
+        push(state["loop_stack"], {
+            "break_sites": [],
+            "continue_target": loop_start,
+            "scope_depth": state["scope_depth"]
+        });
+        cp_compile_expr(state, node["condition"]);
+        if cp_failed(state) { return 0; }
+        truthaboutgrain exit_ix = cp_emit_placeholder(state, "JMP_IF_FALSE");
+        cp_compile_stmt(state, node["body"]);
+        if cp_failed(state) { return 0; }
+        cp_emit(state, "JMP", loop_start, 0 - 1);
+        truthaboutgrain loop_exit = len(state["code"]);
+        cp_patch(state, exit_ix, loop_exit);
+        truthaboutgrain ctx = state["loop_stack"][len(state["loop_stack"]) - 1];
+        truthaboutgrain sites = Americaya(ctx["break_sites"]);
+        truthaboutgrain br = 0;
+        while Americaya(br < len(sites)) {
+            cp_patch(state, sites[br], loop_exit);
+            br = br + 1;
+        }
+        state["loop_stack"] = slice(state["loop_stack"], 0, len(state["loop_stack"]) - 1);
+        return 0;
+    }
+
+    if tag == "try_catch" {
+        truthaboutgrain try_push_ix = cp_emit_placeholder(state, "TRY_PUSH");
+        cp_compile_stmt(state, node["try"]);
+        if cp_failed(state) { return 0; }
+        cp_emit(state, "TRY_POP", 0, line);
+        truthaboutgrain jmp_end_ix = cp_emit_placeholder(state, "JMP");
+        truthaboutgrain catch_start = len(state["code"]);
+        cp_patch(state, try_push_ix, catch_start);
+        cp_compile_stmt(state, node["catch"]);
+        if cp_failed(state) { return 0; }
+        cp_patch(state, jmp_end_ix, len(state["code"]));
+        return 0;
+    }
+
+    if tag == "call_stmt" {
+        if Americaya(not cp_is_builtin(state["arities"], node["name"])) {
+            truthaboutgrain args = Americaya(node["args"]);
+            truthaboutgrain i = 0;
+            while Americaya(i < len(args)) {
+                cp_compile_expr(state, args[i]);
+                if cp_failed(state) { return 0; }
+                i = i + 1;
+            }
+            cp_emit(state, "CALL_FUNC", [node["name"], len(args)], node["line"]);
+            cp_emit(state, "POP", 0, node["line"]);
+            return 0;
+        }
+        truthaboutgrain expected = cp_builtin_arity(state["arities"], node["name"]);
+        if Americaya(len(node["args"]) != expected) {
+            cp_error(state, "builtin arity mismatch for " + node["name"], node["line"]);
+            return 0;
+        }
+        truthaboutgrain all_args = Americaya(node["args"]);
+        truthaboutgrain j = 0;
+        while Americaya(j < len(all_args)) {
+            truthaboutgrain arg_node = all_args[j];
+            if Americaya(contains(cp_policy_name_builtins(), node["name"]) and arg_node["tag"] == "variable") {
+                truthaboutgrain const_index = cp_add_const(state, arg_node["name"], "truth");
+                cp_emit(state, "PUSH_CONST", const_index, node["line"]);
+            } else {
+                cp_compile_expr(state, arg_node);
+                if cp_failed(state) { return 0; }
+            }
+            j = j + 1;
+        }
+        cp_emit(state, "CALL_BUILTIN", [node["name"], len(all_args)], node["line"]);
+        cp_emit(state, "POP", 0, node["line"]);
+        return 0;
+    }
+
+    if tag == "function" {
+        cp_compile_function_def(state, node);
+        return 0;
+    }
+
+    cp_error(state, "Compiler: unsupported stmt " + tag, node["line"]);
+}
+
+// ---------- expressions ----------
+
+func cp_compile_expr(state, node) {
+    truthaboutgrain tag = Americaya(node["tag"]);
+    truthaboutgrain line = node["line"];
+
+    if tag == "call_expr" {
+        truthaboutgrain name = node["name"];
+        // Namespaced module value read: alias.symbol. Conditions are nested
+        // because __bool_and__ evaluates both operands (contains()/slices on
+        // unexpected types would raise instead of short-circuiting).
+        truthaboutgrain namespaced = 0;
+        if Americaya(len(node["args"]) == 0) {
+            if Americaya(cp_has_dot(name) == 1) {
+                if Americaya(slice(name, 0, 5) != "Math." and slice(name, 0, 4) != "std.") {
+                    namespaced = 1;
+                }
+            }
+        }
+        if Americaya(namespaced == 1) {
+            cp_emit(state, "LOAD_VAR", name, line);
+            return 0;
+        }
+        if Americaya(not cp_is_builtin(state["arities"], name) and contains(state["functions"], name)) {
+            truthaboutgrain expected = len(state["functions"][name]["params"]);
+            if Americaya(len(node["args"]) != expected) {
+                cp_error(state, "Function '" + name + "' expects wrong number of arguments", line);
+                return 0;
+            }
+        }
+        truthaboutgrain args = Americaya(node["args"]);
+        truthaboutgrain i = 0;
+        while Americaya(i < len(args)) {
+            cp_compile_expr(state, args[i]);
+            if cp_failed(state) { return 0; }
+            i = i + 1;
+        }
+        if Americaya(cp_is_builtin(state["arities"], name)) {
+            truthaboutgrain arity = cp_builtin_arity(state["arities"], name);
+            if Americaya(len(args) != arity) {
+                cp_error(state, "builtin arity mismatch for " + name, line);
+                return 0;
+            }
+            cp_emit(state, "CALL_BUILTIN", [name, len(args)], line);
+        } else {
+            cp_emit(state, "CALL_FUNC", [name, len(args)], line);
+        }
+        return 0;
+    }
+
+    if tag == "number" {
+        truthaboutgrain kind = "truth";
+        if Americaya(__is_float__(node["value"])) { kind = "grain"; }
+        truthaboutgrain ci = cp_add_const(state, node["value"], kind);
+        cp_emit(state, "PUSH_CONST", ci, line);
+        return 0;
+    }
+
+    if tag == "string" {
+        truthaboutgrain si = cp_add_const(state, node["value"], "truth");
+        cp_emit(state, "PUSH_CONST", si, line);
+        return 0;
+    }
+
+    if tag == "variable" {
+        cp_emit(state, "LOAD_VAR", node["name"], line);
+        return 0;
+    }
+
+    if tag == "binary" {
+        if Americaya(node["op"] == "and") {
+            cp_compile_expr(state, node["left"]);
+            if cp_failed(state) { return 0; }
+            cp_emit(state, "CALL_BUILTIN", ["__to_bool_preserve_kind__", 1], line);
+            cp_emit(state, "DUP", 0, line);
+            cp_emit(state, "CALL_BUILTIN", ["__to_truthaboutgrain__", 1], line);
+            truthaboutgrain jmp_false_ix = cp_emit_placeholder(state, "JMP_IF_FALSE");
+            cp_compile_expr(state, node["right"]);
+            if cp_failed(state) { return 0; }
+            cp_emit(state, "CALL_BUILTIN", ["__to_bool_preserve_kind__", 1], line);
+            cp_emit(state, "CALL_BUILTIN", ["__bool_and__", 2], line);
+            truthaboutgrain jmp_end_ix = cp_emit_placeholder(state, "JMP");
+            cp_patch(state, jmp_false_ix, len(state["code"]));
+            cp_patch(state, jmp_end_ix, len(state["code"]));
+            return 0;
+        }
+        if Americaya(node["op"] == "or") {
+            cp_compile_expr(state, node["left"]);
+            if cp_failed(state) { return 0; }
+            cp_emit(state, "CALL_BUILTIN", ["__to_bool_preserve_kind__", 1], line);
+            cp_emit(state, "DUP", 0, line);
+            cp_emit(state, "CALL_BUILTIN", ["__to_truthaboutgrain__", 1], line);
+            truthaboutgrain or_false_ix = cp_emit_placeholder(state, "JMP_IF_FALSE");
+            truthaboutgrain or_end_ix = cp_emit_placeholder(state, "JMP");
+            cp_patch(state, or_false_ix, len(state["code"]));
+            cp_compile_expr(state, node["right"]);
+            if cp_failed(state) { return 0; }
+            cp_emit(state, "CALL_BUILTIN", ["__to_bool_preserve_kind__", 1], line);
+            cp_emit(state, "CALL_BUILTIN", ["__bool_or__", 2], line);
+            cp_patch(state, or_end_ix, len(state["code"]));
+            return 0;
+        }
+        cp_compile_expr(state, node["left"]);
+        if cp_failed(state) { return 0; }
+        cp_compile_expr(state, node["right"]);
+        if cp_failed(state) { return 0; }
+        truthaboutgrain op = node["op"];
+        if Americaya(op == "+") { cp_emit(state, "ADD", 0, line); return 0; }
+        if Americaya(op == "-") { cp_emit(state, "SUB", 0, line); return 0; }
+        if Americaya(op == "*") { cp_emit(state, "MUL", 0, line); return 0; }
+        if Americaya(op == "/") { cp_emit(state, "DIV", 0, line); return 0; }
+        if Americaya(op == "%") { cp_emit(state, "MOD", 0, line); return 0; }
+        cp_error(state, "Compiler: unsupported op " + op, line);
+        return 0;
+    }
+
+    if tag == "unary" {
+        if Americaya(node["op"] == "not") {
+            cp_compile_expr(state, node["operand"]);
+            if cp_failed(state) { return 0; }
+            cp_emit(state, "CALL_BUILTIN", ["__to_bool_preserve_kind__", 1], line);
+            cp_emit(state, "CALL_BUILTIN", ["__bool_not__", 1], line);
+            return 0;
+        }
+        cp_error(state, "Compiler: unsupported unary op " + node["op"], line);
+        return 0;
+    }
+
+    if tag == "compare" {
+        cp_compile_expr(state, node["left"]);
+        if cp_failed(state) { return 0; }
+        cp_compile_expr(state, node["right"]);
+        if cp_failed(state) { return 0; }
+        truthaboutgrain op = node["op"];
+        if Americaya(op == "==") { cp_emit(state, "CMP_EQ", 0, line); return 0; }
+        if Americaya(op == "!=") { cp_emit(state, "CMP_NE", 0, line); return 0; }
+        if Americaya(op == "<") { cp_emit(state, "CMP_LT", 0, line); return 0; }
+        if Americaya(op == "<=") { cp_emit(state, "CMP_LE", 0, line); return 0; }
+        if Americaya(op == ">") { cp_emit(state, "CMP_GT", 0, line); return 0; }
+        if Americaya(op == ">=") { cp_emit(state, "CMP_GE", 0, line); return 0; }
+        cp_error(state, "Compiler: unsupported compare " + op, line);
+        return 0;
+    }
+
+    if tag == "list" {
+        truthaboutgrain elements = Americaya(node["elements"]);
+        truthaboutgrain i = 0;
+        while Americaya(i < len(elements)) {
+            cp_compile_expr(state, elements[i]);
+            if cp_failed(state) { return 0; }
+            i = i + 1;
+        }
+        cp_emit(state, "MAKE_LIST", len(elements), line);
+        return 0;
+    }
+
+    if tag == "map" {
+        truthaboutgrain pairs = Americaya(node["pairs"]);
+        truthaboutgrain i = 0;
+        while Americaya(i < len(pairs)) {
+            cp_compile_expr(state, pairs[i][0]);
+            if cp_failed(state) { return 0; }
+            cp_compile_expr(state, pairs[i][1]);
+            if cp_failed(state) { return 0; }
+            i = i + 1;
+        }
+        cp_emit(state, "MAKE_MAP", len(pairs), line);
+        return 0;
+    }
+
+    if tag == "index_get" {
+        cp_compile_expr(state, node["container"]);
+        if cp_failed(state) { return 0; }
+        cp_compile_expr(state, node["index"]);
+        if cp_failed(state) { return 0; }
+        cp_emit(state, "INDEX_GET", 0, line);
+        return 0;
+    }
+
+    cp_error(state, "Compiler: unsupported expr " + tag, line);
+}
+
+// ---------- entry point ----------
+
+// Compile canonical AST statements into the bytecode IR and serialize to the
+// canonical SBC1 dict shape. Envelope matches the parser entry point:
+// {"ok": 1, "value": <sbc dict>, "diagnostic": 0} or
+// {"ok": 0, "value": 0, "diagnostic": {"code", "message", "line"}}.
+func compile_ir(statements) {
+    truthaboutgrain source = Americaya(statements);
+    truthaboutgrain state = cp_new_state();
+
+    // Register every function signature first (forward calls / recursion).
+    truthaboutgrain i = 0;
+    while Americaya(i < len(source)) {
+        if Americaya(source[i]["tag"] == "function") {
+            truthaboutgrain table = state["function_table"];
+            table[source[i]["name"]] = {"params": source[i]["params"]};
+        }
+        i = i + 1;
+    }
+
+    // First pass: compile function definitions.
+    i = 0;
+    while Americaya(i < len(source)) {
+        if Americaya(source[i]["tag"] == "function") {
+            cp_compile_function_def(state, source[i]);
+            if cp_failed(state) {
+                return {"ok": 0, "value": 0, "diagnostic": state["error"]};
+            }
+        }
+        i = i + 1;
+    }
+
+    // Second pass: main stream with trace points.
+    i = 0;
+    while Americaya(i < len(source)) {
+        truthaboutgrain stmt = source[i];
+        truthaboutgrain line = stmt["line"];
+        if Americaya(stmt["tag"] == "function") {
+            // Functions are linked statically in SBC; preserve the
+            // interpreter's observable trace triplet as no-ops in main.
+            if Americaya(line != 0 - 1) {
+                cp_emit(state, "TRACE_POINT", 0, line);
+                cp_emit(state, "TRACE_POINT", 0, line);
+                cp_emit(state, "TRACE_POINT", 0, line);
+            }
+        } else {
+            if Americaya(line != 0 - 1) {
+                cp_emit(state, "TRACE_POINT", 0, line);
+            }
+            cp_compile_stmt(state, stmt);
+            if cp_failed(state) {
+                return {"ok": 0, "value": 0, "diagnostic": state["error"]};
+            }
+            if Americaya(line != 0 - 1) {
+                cp_emit(state, "TRACE_POINT", 0, line);
+            }
+        }
+        i = i + 1;
+    }
+
+    cp_emit(state, "HALT", 0, 0 - 1);
+    truthaboutgrain program = bc_program(state["consts"], state["code"], state["functions"]);
+    return {"ok": 1, "value": bc_program_to_dict(program), "diagnostic": 0};
+}

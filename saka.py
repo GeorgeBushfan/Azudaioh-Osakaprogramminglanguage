@@ -25,6 +25,11 @@ _ensure_local_parser_module()
 
 from interpreter import Interpreter
 from runtime import Runtime
+from compiler import Compiler
+from vm import VM
+from sbc import dump as dump_sbc, load as load_sbc
+from verifier import verify_program
+from print_bytecode import print_bytecode
 from arg_parser import create_arg_parser
 from equiv_lock import enforce_equivalence_lock
 from equiv_test import parse_ast, run_interpreter, run_vm
@@ -95,7 +100,15 @@ def _run_repl(debug: bool = False, show_tokens: bool = False):
 
 def main(argv=None):
     parser = create_arg_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if "--" in raw_argv:
+        separator = raw_argv.index("--")
+        cli_argv = raw_argv[:separator]
+        program_args = raw_argv[separator + 1:]
+    else:
+        cli_argv = raw_argv
+        program_args = []
+    args = parser.parse_args(cli_argv)
 
     if args.repl:
         if args.vm_only:
@@ -108,8 +121,27 @@ def main(argv=None):
         print("Error: source_file is required unless --repl is used")
         return 1
 
+    if args.run_sbc or args.disasm or args.verify_bytecode:
+        try:
+            program = load_sbc(args.source_file)
+            verify_program(program, debug=args.debug)
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f"BytecodeError: {error}")
+            return 1
+        if args.verify_bytecode:
+            print("Bytecode verified")
+        elif args.disasm:
+            print_bytecode(program)
+        else:
+            rt = Runtime()
+            rt.program_args = program_args
+            rt.current_file = str(pathlib.Path(args.source_file).resolve())
+            VM(rt, debug=args.debug).run(program)
+            _print_program_output(rt.stdout.getvalue())
+        return 0
+
     try:
-        source = open(args.source_file).read()
+        source = pathlib.Path(args.source_file).read_text(encoding="utf-8")
     except FileNotFoundError:
         print(f"Error: File '{args.source_file}' not found")
         return 1
@@ -117,20 +149,28 @@ def main(argv=None):
     # Parse AST
     ast = parse_ast(source, show_tokens=args.show_lexer_tokens, debug=args.debug)
 
+    if args.compile:
+        program = Compiler(debug=args.debug).compile(ast)
+        verify_program(program, debug=args.debug)
+        output = args.output or str(pathlib.Path(args.source_file).with_suffix(".sbc"))
+        dump_sbc(program, output)
+        print(output)
+        return 0
+
     # Execute based on CLI flags
     if args.vm_only:
-        result = run_vm(ast, debug=args.debug)
+        result = run_vm(ast, debug=args.debug, program_args=program_args)
         _print_program_output(result.stdout, show_empty_tip=True)
         return 0
     elif args.interpreter_only:
-        result = run_interpreter(ast, debug=args.debug)
+        result = run_interpreter(ast, debug=args.debug, program_args=program_args)
         _print_program_output(result.stdout, show_empty_tip=True)
         return 0
 
     # Run equivalence check unless disabled
     if not args.no_lock:
-        interp_result = run_interpreter(ast, debug=args.debug)
-        vm_result = run_vm(ast, debug=args.debug)
+        interp_result = run_interpreter(ast, debug=args.debug, program_args=program_args)
+        vm_result = run_vm(ast, debug=args.debug, program_args=program_args)
         enforce_equivalence_lock(
             interp_result.traces,
             vm_result.traces,
@@ -142,6 +182,7 @@ def main(argv=None):
 
     # Execute normally with interpreter
     rt = Runtime()
+    rt.program_args = program_args
     rt.current_file = str(pathlib.Path(args.source_file).resolve())
     if debug_mode:
         print("Running interpreter with debug mode...")

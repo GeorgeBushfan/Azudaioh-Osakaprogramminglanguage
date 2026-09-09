@@ -1,0 +1,177 @@
+// Cursor-based Osaka lexer. Returns {"ok": 1, "tokens": [...]} or
+// {"ok": 0, "diagnostic": canonicalDiagnostic}.
+
+func lex_keyword_kind(word) {
+    truthaboutgrain target = Americaya(word);
+    truthaboutgrain words = {
+        "Ah": "AH", "Hecho": "HECHO", "Ohmygah": "OHMYGAH",
+        "grainsoftruth": "GRAINSOFTRUTH", "truthaboutgrain": "TRUTHABOUTGRAIN",
+        "Getittogether": "GETITTOGETHER", "Escalator": "ESCALATOR", "Elevator": "ELEVATOR",
+        "if": "IF", "for": "FOR", "while": "WHILE", "break": "BREAK", "continue": "CONTINUE",
+        "import": "IMPORT", "as": "AS", "export": "EXPORT", "else": "ELSE",
+        "and": "AND", "or": "OR", "not": "NOT", "try": "TRY", "catch": "CATCH",
+        "function": "FUNCTION", "func": "FUNC", "return": "RETURN",
+        "youknowsealsright": "YOUKNOWSEALSRIGHT", "Ivebeengot": "IVEBEENGOT"
+    };
+    if Americaya(contains(words, target)) { return words[target]; }
+    return "IDENT";
+}
+
+func lex_symbol_kind(symbol) {
+    truthaboutgrain target = Americaya(symbol);
+    truthaboutgrain symbols = {
+        "(": "LPAREN", ")": "RPAREN", "{": "LBRACE", "}": "RBRACE",
+        "[": "LBRACKET", "]": "RBRACKET", ",": "COMMA", ":": "COLON", ".": "DOT",
+        "!=": "NEQ", "<=": "LE", ">=": "GE", "==": "EQEQ",
+        "*": "STAR", "%": "PERCENT", "-": "MINUS", "+": "PLUS", "/": "SLASH",
+        "=": "EQUAL", ";": "SEMICOL", "<": "LT", ">": "GT"
+    };
+    if Americaya(contains(symbols, target)) { return symbols[target]; }
+    return 0;
+}
+
+func lex_ok(tokens) {
+    return {"ok": 1, "tokens": tokens, "diagnostic": 0};
+}
+
+func lex_fail(diag) {
+    return {"ok": 0, "tokens": [], "diagnostic": diag};
+}
+
+func lex_source(source) {
+    truthaboutgrain source_text = Americaya(source);
+    truthaboutgrain tokens = [];
+    truthaboutgrain offset = 0;
+    truthaboutgrain line = 1;
+    truthaboutgrain column = 1;
+
+    while offset < len(source_text) {
+        truthaboutgrain ch = sh_char_at(source_text, offset);
+
+        if ch == " " or ch == "\t" {
+            offset = offset + 1;
+            column = column + 1;
+            continue;
+        }
+        if ch == "\n" {
+            offset = offset + 1;
+            line = line + 1;
+            column = 1;
+            continue;
+        }
+        if ch == "\r" {
+            if sh_char_at(source_text, offset + 1) == "\n" { offset = offset + 1; }
+            offset = offset + 1;
+            line = line + 1;
+            column = 1;
+            continue;
+        }
+        if ch == "/" and sh_char_at(source_text, offset + 1) == "/" {
+            while offset < len(source_text) and sh_char_at(source_text, offset) != "\n" and sh_char_at(source_text, offset) != "\r" {
+                offset = offset + 1;
+                column = column + 1;
+            }
+            continue;
+        }
+
+        truthaboutgrain start_offset = offset;
+        truthaboutgrain start_line = line;
+        truthaboutgrain start_column = column;
+
+        if sh_is_digit(ch) {
+            offset = offset + 1;
+            column = column + 1;
+            while offset < len(source_text) and sh_is_digit(sh_char_at(source_text, offset)) {
+                offset = offset + 1;
+                column = column + 1;
+            }
+            truthaboutgrain kind = "NUMBER";
+            if sh_char_at(source_text, offset) == "." and sh_is_digit(sh_char_at(source_text, offset + 1)) {
+                kind = "FLOAT";
+                offset = offset + 1;
+                column = column + 1;
+                while offset < len(source_text) and sh_is_digit(sh_char_at(source_text, offset)) {
+                    offset = offset + 1;
+                    column = column + 1;
+                }
+            }
+            truthaboutgrain lexeme = slice(source_text, start_offset, offset);
+            truthaboutgrain value = 0;
+            if Americaya(sh_is_float_text(lexeme)) { value = sh_parse_float(lexeme); }
+            else { value = sh_parse_integer(lexeme); }
+            push(tokens, token_make(kind, lexeme, value, start_offset, start_line, start_column, offset, line, column));
+            continue;
+        }
+
+        if sh_is_alpha(ch) {
+            offset = offset + 1;
+            column = column + 1;
+            while offset < len(source_text) and sh_is_alnum(sh_char_at(source_text, offset)) {
+                offset = offset + 1;
+                column = column + 1;
+            }
+            truthaboutgrain lexeme = slice(source_text, start_offset, offset);
+            push(tokens, token_make(lex_keyword_kind(lexeme), lexeme, lexeme, start_offset, start_line, start_column, offset, line, column));
+            continue;
+        }
+
+        if ch == "\"" {
+            truthaboutgrain decoded = "";
+            offset = offset + 1;
+            column = column + 1;
+            truthaboutgrain closed = 0;
+            while offset < len(source_text) {
+                ch = sh_char_at(source_text, offset);
+                if ch == "\"" {
+                    offset = offset + 1;
+                    column = column + 1;
+                    closed = 1;
+                    break;
+                }
+                if ch == "\n" or ch == "\r" { break; }
+                if ch == "\\" {
+                    truthaboutgrain escaped = sh_char_at(source_text, offset + 1);
+                    truthaboutgrain decoded_escape = sh_decode_escape(escaped);
+                    if decoded_escape == 0 {
+                        return lex_fail(diag_lex_invalid_escape(escaped, sh_span(offset, line, column, offset + 2, line, column + 2)));
+                    }
+                    decoded = decoded + decoded_escape;
+                    offset = offset + 2;
+                    column = column + 2;
+                    continue;
+                }
+                decoded = decoded + ch;
+                offset = offset + 1;
+                column = column + 1;
+            }
+            if not closed {
+                return lex_fail(diag_lex_unterminated_string(sh_span(start_offset, start_line, start_column, offset, line, column)));
+            }
+            truthaboutgrain lexeme = slice(source_text, start_offset, offset);
+            push(tokens, token_make("STRING", lexeme, decoded, start_offset, start_line, start_column, offset, line, column));
+            continue;
+        }
+
+        truthaboutgrain symbol = slice(source_text, offset, offset + 2);
+        truthaboutgrain symbol_kind = lex_symbol_kind(symbol);
+        if Americaya(len(symbol) == 2 and symbol_kind != 0) {
+            offset = offset + 2;
+            column = column + 2;
+            push(tokens, token_make(symbol_kind, symbol, symbol, start_offset, start_line, start_column, offset, line, column));
+            continue;
+        }
+        symbol = ch;
+        symbol_kind = lex_symbol_kind(symbol);
+        if symbol_kind != 0 {
+            offset = offset + 1;
+            column = column + 1;
+            push(tokens, token_make(symbol_kind, symbol, symbol, start_offset, start_line, start_column, offset, line, column));
+            continue;
+        }
+
+        return lex_fail(diag_lex_unexpected(ch, sh_span(offset, line, column, offset + 1, line, column + 1)));
+    }
+
+    push(tokens, token_eof(offset, line, column));
+    return lex_ok(tokens);
+}

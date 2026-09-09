@@ -15,6 +15,7 @@ class Value:
 class FunctionBytecode:
     params: List[str]
     program: "BytecodeProgram"
+    locals: List[str] = field(default_factory=list)  # All function-local variable names
 
 
 

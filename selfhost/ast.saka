@@ -1,0 +1,99 @@
+// Canonical tagged-map AST constructors.
+// Field names and tags mirror frontend_contract.canonical_ast exactly so the
+// Stage 0 and self-hosted frontends produce directly comparable records.
+
+func ast_number(value, line) {
+    return {"tag": "number", "value": value, "line": line};
+}
+
+func ast_string(value, line) {
+    return {"tag": "string", "value": value, "line": line};
+}
+
+func ast_variable(name, line) {
+    return {"tag": "variable", "name": name, "line": line};
+}
+
+func ast_binary(op, left, right, line) {
+    return {"tag": "binary", "op": op, "left": left, "right": right, "line": line};
+}
+
+func ast_unary(op, operand, line) {
+    return {"tag": "unary", "op": op, "operand": operand, "line": line};
+}
+
+func ast_compare(op, left, right, line) {
+    return {"tag": "compare", "op": op, "left": left, "right": right, "line": line};
+}
+
+func ast_list(elements, line) {
+    return {"tag": "list", "elements": elements, "line": line};
+}
+
+func ast_map(pairs, line) {
+    return {"tag": "map", "pairs": pairs, "line": line};
+}
+
+func ast_index_get(container, index, line) {
+    return {"tag": "index_get", "container": container, "index": index, "line": line};
+}
+
+func ast_index_set(container, index, value, line) {
+    return {"tag": "index_set", "container": container, "index": index, "value": value, "line": line};
+}
+
+func ast_call_stmt(name, args, line) {
+    return {"tag": "call_stmt", "name": name, "args": args, "line": line};
+}
+
+func ast_call_expr(name, args, line) {
+    return {"tag": "call_expr", "name": name, "args": args, "line": line};
+}
+
+func ast_assign(name, expr, decl_kind, line) {
+    return {"tag": "assign", "name": name, "expr": expr, "decl_kind": decl_kind, "line": line};
+}
+
+func ast_block(statements, line) {
+    return {"tag": "block", "statements": statements, "line": line};
+}
+
+func ast_if(condition, then_body, else_body, line) {
+    return {"tag": "if", "condition": condition, "then": then_body, "else": else_body, "line": line};
+}
+
+func ast_while(condition, body, line) {
+    return {"tag": "while", "condition": condition, "body": body, "line": line};
+}
+
+func ast_break(line) {
+    return {"tag": "break", "line": line};
+}
+
+func ast_continue(line) {
+    return {"tag": "continue", "line": line};
+}
+
+func ast_function(name, params, body, line) {
+    return {"tag": "function", "name": name, "params": params, "body": body, "line": line};
+}
+
+func ast_return(expr, line) {
+    return {"tag": "return", "expr": expr, "line": line};
+}
+
+func ast_try_catch(try_body, catch_body, line) {
+    return {"tag": "try_catch", "try": try_body, "catch": catch_body, "line": line};
+}
+
+func ast_import(module, alias, is_path, line) {
+    return {"tag": "import", "module": module, "alias": alias, "is_path": is_path, "line": line};
+}
+
+func ast_export(inner, line) {
+    return {"tag": "export", "node": inner, "line": line};
+}
+
+func ast_declaration(decl_type, name, line) {
+    return {"tag": "declaration", "decl_type": decl_type, "name": name, "line": line};
+}

@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/run_gate_c.py", line 315, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/run_gate_c.py", line 271, in main
+    run_stage_phased(stage_in, stage_out, f"s{index}")
+  File "/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/run_gate_c.py", line 157, in run_stage_phased
+    text = phase("serialize", "sbc_text", lambda: _call_in_program(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/run_gate_c.py", line 133, in phase
+    _save_ckpt(ckpt, result)
+  File "/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/run_gate_c.py", line 105, in _save_ckpt
+    tmp.replace(path)
+        ^^^^^^^
+  File "/opt/homebrew/Cellar/pypy3.11/7.3.23_2/libexec/lib/pypy3.11/pathlib.py", line 1188, in replace
+    os.replace(self, target)
+       ^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: PosixPath('/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/bootstrap/.ckpt.s2.sbc_text.json.tmp') -> PosixPath('/Users/AlJames/Desktop/Osaka Lang (Self-host attempt)/bootstrap/.ckpt.s2.sbc_text.json')

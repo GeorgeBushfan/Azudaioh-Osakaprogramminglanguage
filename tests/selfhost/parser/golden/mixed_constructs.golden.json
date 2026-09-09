@@ -1,0 +1,212 @@
+[
+ {
+  "decl_kind": "truth",
+  "expr": {
+   "line": 2,
+   "tag": "number",
+   "value": 0
+  },
+  "line": 2,
+  "name": "total",
+  "tag": "assign"
+ },
+ {
+  "line": -1,
+  "statements": [
+   {
+    "decl_kind": 0,
+    "expr": {
+     "line": 3,
+     "tag": "number",
+     "value": 0
+    },
+    "line": 3,
+    "name": "i",
+    "tag": "assign"
+   },
+   {
+    "body": {
+     "line": -1,
+     "statements": [
+      {
+       "condition": {
+        "left": {
+         "line": 4,
+         "name": "i",
+         "tag": "variable"
+        },
+        "line": 4,
+        "op": "==",
+        "right": {
+         "line": 4,
+         "tag": "number",
+         "value": 2
+        },
+        "tag": "compare"
+       },
+       "else": 0,
+       "line": 4,
+       "tag": "if",
+       "then": {
+        "line": -1,
+        "statements": [
+         {
+          "line": -1,
+          "statements": [
+           {
+            "decl_kind": 0,
+            "expr": {
+             "left": {
+              "line": 3,
+              "name": "i",
+              "tag": "variable"
+             },
+             "line": -1,
+             "op": "+",
+             "right": {
+              "line": 3,
+              "tag": "number",
+              "value": 1
+             },
+             "tag": "binary"
+            },
+            "line": 3,
+            "name": "i",
+            "tag": "assign"
+           },
+           {
+            "line": 4,
+            "tag": "continue"
+           }
+          ],
+          "tag": "block"
+         }
+        ],
+        "tag": "block"
+       }
+      },
+      {
+       "decl_kind": 0,
+       "expr": {
+        "left": {
+         "line": 5,
+         "name": "total",
+         "tag": "variable"
+        },
+        "line": -1,
+        "op": "+",
+        "right": {
+         "line": 5,
+         "name": "i",
+         "tag": "variable"
+        },
+        "tag": "binary"
+       },
+       "line": 5,
+       "name": "total",
+       "tag": "assign"
+      },
+      {
+       "decl_kind": 0,
+       "expr": {
+        "left": {
+         "line": 3,
+         "name": "i",
+         "tag": "variable"
+        },
+        "line": -1,
+        "op": "+",
+        "right": {
+         "line": 3,
+         "tag": "number",
+         "value": 1
+        },
+        "tag": "binary"
+       },
+       "line": 3,
+       "name": "i",
+       "tag": "assign"
+      }
+     ],
+     "tag": "block"
+    },
+    "condition": {
+     "left": {
+      "line": 3,
+      "name": "i",
+      "tag": "variable"
+     },
+     "line": 3,
+     "op": "<",
+     "right": {
+      "line": 3,
+      "tag": "number",
+      "value": 5
+     },
+     "tag": "compare"
+    },
+    "line": 3,
+    "tag": "while"
+   }
+  ],
+  "tag": "block"
+ },
+ {
+  "body": {
+   "line": -1,
+   "statements": [
+    {
+     "expr": {
+      "left": {
+       "line": 8,
+       "name": "a",
+       "tag": "variable"
+      },
+      "line": -1,
+      "op": "+",
+      "right": {
+       "line": 8,
+       "name": "b",
+       "tag": "variable"
+      },
+      "tag": "binary"
+     },
+     "line": 8,
+     "tag": "return"
+    }
+   ],
+   "tag": "block"
+  },
+  "line": 7,
+  "name": "add",
+  "params": [
+   "a",
+   "b"
+  ],
+  "tag": "function"
+ },
+ {
+  "args": [
+   {
+    "args": [
+     {
+      "line": 10,
+      "name": "total",
+      "tag": "variable"
+     },
+     {
+      "line": 10,
+      "tag": "number",
+      "value": 2
+     }
+    ],
+    "line": 10,
+    "name": "add",
+    "tag": "call_expr"
+   }
+  ],
+  "line": 10,
+  "name": "Say",
+  "tag": "call_stmt"
+ }
+]

@@ -61,5 +61,11 @@ def create_arg_parser():
         action='store_true',
         help='Show lexer token stream output'
     )
-    
+
+    bytecode = parser.add_mutually_exclusive_group()
+    bytecode.add_argument('--compile', action='store_true', help='Compile source to canonical SBC1')
+    bytecode.add_argument('--run-sbc', action='store_true', help='Verify and execute an SBC1 file')
+    bytecode.add_argument('--disasm', action='store_true', help='Disassemble an SBC1 file')
+    bytecode.add_argument('--verify-bytecode', action='store_true', help='Verify an SBC1 file')
+    parser.add_argument('-o', '--output', help='Output path for --compile')
     return parser
