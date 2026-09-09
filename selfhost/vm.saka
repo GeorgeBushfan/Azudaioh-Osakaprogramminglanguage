@@ -59,7 +59,13 @@ func vm_make_null() {
 
 func vm_error(state, message) {
     if Americaya(state["error"] == 0) {
-        state["error"] = {"code": "RUNTIME_ERROR", "message": message};
+        truthaboutgrain where = "?";
+        truthaboutgrain frames = state["frames"];
+        if Americaya(len(frames) > 0) {
+            truthaboutgrain tf = frames[len(frames) - 1];
+            where = tf["name"] + " ip " + vm_int_to_text(tf["ip"]) + " line " + vm_int_to_text(tf["line"]);
+        }
+        state["error"] = {"code": "RUNTIME_ERROR", "message": message, "where": where};
     }
 }
 
@@ -1180,4 +1186,76 @@ func vm_run(document, argv) {
         };
     }
     return {"ok": 1, "value": {"stdout": state["stdout"], "warnings": state["warnings"]}, "diagnostic": 0};
+}
+
+// Invoke a single function of an SBC1 document with raw (JSON) arguments.
+// Gate D support for run_gate_d.py: the checkpointed stage chain calls the
+// artifact's pure pipeline functions (parser_parse_program, compile_ir,
+// vf_verify, em_dump) with raw values and checkpoints their raw results.
+// Returns {"ok": 1, "value": <raw result data>, "diagnostic": 0} or the
+// standard error envelope.
+func vm_call_func(document, fname, raw_args) {
+    truthaboutgrain source = Americaya(document);
+    truthaboutgrain raw = Americaya(raw_args);
+    truthaboutgrain state = vm_new_state([]);
+    state["functions"] = source["functions"];
+    if Americaya(not contains(state["functions"], fname)) {
+        return {
+            "ok": 0,
+            "value": {"stdout": "", "warnings": []},
+            "diagnostic": {"code": "RUNTIME_ERROR", "message": "Undefined function '" + fname + "'"}
+        };
+    }
+
+    // Wrap raw args as canonical constants ({data, kind}, matching the
+    // document's constant pool shape) and build driver bytecode:
+    // PUSH_CONST each arg, CALL_FUNC, HALT.
+    truthaboutgrain wrapped = [];
+    truthaboutgrain code = [];
+    truthaboutgrain i = 0;
+    while Americaya(i < len(raw)) {
+        push(wrapped, {"data": raw[i], "kind": "truth"});
+        push(code, {"op": "PUSH_CONST", "arg": i, "line": 0 - 1});
+        i = i + 1;
+    }
+    push(code, {"op": "CALL_FUNC", "arg": [fname, len(wrapped)], "line": 0 - 1});
+    push(code, {"op": "HALT", "arg": 0, "line": 0 - 1});
+
+    truthaboutgrain entry = {
+        "code": code,
+        "consts": wrapped,
+        "functions": source["functions"],
+        "ip": 0,
+        "ret_ip": 0 - 1,
+        "locals": {},
+        "params": {},
+        "stack": [],
+        "line": 0 - 1,
+        "try": [],
+        "scope_base": 1,
+        "name": "driver"
+    };
+    push(state["frames"], entry);
+
+    while Americaya(len(state["frames"]) > 0) {
+        if Americaya(state["halted"] == 1) { break; }
+        if Americaya(state["error"] != 0) {
+            if Americaya(vm_unwind(state) == 0) { break; }
+            continue;
+        }
+        vm_step(state);
+    }
+
+    if Americaya(state["error"] != 0) {
+        return {
+            "ok": 0,
+            "value": {"stdout": state["stdout"], "warnings": state["warnings"]},
+            "diagnostic": state["error"]
+        };
+    }
+    truthaboutgrain result = state["null"];
+    if Americaya(len(entry["stack"]) > 0) {
+        result = entry["stack"][len(entry["stack"]) - 1];
+    }
+    return {"ok": 1, "value": result[0], "diagnostic": 0};
 }

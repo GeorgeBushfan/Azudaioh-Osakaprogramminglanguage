@@ -1,10 +1,10 @@
 # Gate C fixed-point verification record
 
-- stage1 sha256: 2a6eded48a10877f6b51c9d19835686dd4181e7f98d9422ce43ed2b6b9b1cc4f
-- stage2 sha256: 8fa28eafb21addb14fce625ac239cb0c93af9ff4d0e1200caaa57e438f20428b
-- stage3 sha256: 8fa28eafb21addb14fce625ac239cb0c93af9ff4d0e1200caaa57e438f20428b
+- stage1 sha256: 75ff32fd4243d553d0020dda884b9a48ec8469c3fd18598bf09c99072cffe1bd
+- stage2 sha256: c1b04df02fe0fe91130ce60602d0ffca485ee856f2d528e6cf3b16658da45583
+- stage3 sha256: c1b04df02fe0fe91130ce60602d0ffca485ee856f2d528e6cf3b16658da45583
 - fixed point: SHA256(stage2) == SHA256(stage3): verified
-- source revision: 1638022cd6811e22c96a497449870fb9fab24bd6
+- source revision: 88ddaadfcf0fed625a9b26beaed5a5c8d90451ee
 - language version: 1.1
 - bytecode format: SBC v1
 - stage 0 command: python3 run_gate_c.py
