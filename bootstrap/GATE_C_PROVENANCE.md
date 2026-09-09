@@ -4,7 +4,7 @@
 - stage2 sha256: 87ae5cef82aebecdf469c06d014df9137590854ea1a6270b3559be08febc009b
 - stage3 sha256: 87ae5cef82aebecdf469c06d014df9137590854ea1a6270b3559be08febc009b
 - fixed point: SHA256(stage2) == SHA256(stage3): verified
-- source revision: 920c8d024a89a71e4200b8f5b94860bdac3b85aa
+- source revision: f2d4ec9f42c916d47f53c22f4654ec793d4cec9d
 - language version: 1.1
 - bytecode format: SBC v1
 - stage 0 command: python3 run_gate_c.py
