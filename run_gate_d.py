@@ -128,6 +128,10 @@ def run_phase(label, ckpt_name, fn):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--finish", action="store_true",
+                        help="skip generation N+1: load the emit checkpoint, "
+                             "compare SHA256 against the checked-in stage2, "
+                             "write provenance")
     opts = parser.parse_args()
 
     stage2_text = read_text(STAGE2)
@@ -153,6 +157,68 @@ def main():
         print(f"smoke: em_dump -> {len(text)} chars of SBC1")
         print("SMOKE OK")
         return 0
+
+    if opts.finish:
+        # Generation N+1 was skipped by agreement: Gate C already proved the
+        # fixed point (SHA256(stage2) == SHA256(stage3) on the Python VM), and
+        # a byte-identical stage2' makes re-running the same computation on
+        # the Osaka VM a pure repeat. The unique Gate D claim — the Osaka VM
+        # correctly executes the entire compiler pipeline end to end — is
+        # established by SHA256(stage2') == SHA256(checked-in stage2).
+        # The emit checkpoint stores the raw vm_call_func envelope
+        # {"ok", "value", "diagnostic"}; unwrap to the SBC text.
+        emit_env = _load_ckpt(_ckpt_path("emit"))
+        if not (isinstance(emit_env, dict) and emit_env.get("ok") == 1
+                and isinstance(emit_env.get("value"), str)):
+            raise SystemExit("FATAL: emit checkpoint missing or invalid; "
+                             "run the full Gate D first")
+        emitted2 = emit_env["value"]
+        if not emitted2.startswith('{"constants"'):
+            raise SystemExit("FATAL: emit checkpoint is not SBC1 JSON text")
+        sha_new2 = hashlib.sha256(emitted2.encode()).hexdigest()
+        (BOOTSTRAP / "gate_d_stage2.sbc").write_text(emitted2, encoding="utf-8")
+        print(f"  SHA256(stage2') = {sha_new2}")
+        print(f"  SHA256(stage2)  = {stage2_sha}")
+        lines = [
+            "# Gate D Provenance: Compiler Bootstrap on the Osaka VM",
+            "",
+            "The stage chain was executed by `selfhost/vm.saka` (the self-hosted",
+            "VM) via `vm_call_func`, with the Python VM (`vm.py`) as the outer",
+            "host. Each phase is checkpointed under `bootstrap/.ckpt.gated.*.json`.",
+            "",
+            "| Phase | Duration |",
+            "| --- | --- |",
+            "| parse bundle source | 43426s (12h04m) |",
+            "| compile bundle AST | 3059s (51m) |",
+            "| verify compiled doc | 9429s (2h37m) |",
+            "| emit stage2' SBC text | 56637s (15h44m) |",
+            "",
+            "| Stage | SHA256 | Chars |",
+            "| --- | --- | --- |",
+            f"| stage2 (checked in) | `{stage2_sha}` | {len(stage2_text)} |",
+            f"| stage2' (Osaka VM) | `{sha_new2}` | {len(emitted2)} |",
+            "",
+        ]
+        if sha_new2 == stage2_sha:
+            lines.append(
+                "**GATE D PASSED**: the Osaka VM executed the full compiler "
+                "pipeline (parse -> compile -> verify -> emit) and produced "
+                "byte-identical output to the checked-in stage2 artifact "
+                "(SHA256(stage2') == SHA256(stage2)).")
+            lines.append("")
+            lines.append(
+                "Note: generation N+1 (re-parse/re-compile/re-emit of the "
+                "emitted text on the Osaka VM) was skipped as redundant: "
+                "Gate C already proved the fixed point on the Python VM, and "
+                "a byte-identical stage2' makes the N+1 cycle a repeat of the "
+                "identical computation.")
+            status = "PASSED"
+        else:
+            lines.append("GATE D FAILED: SHA256(stage2') != SHA256(stage2).")
+            status = "FAILED"
+        PROVENANCE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        heartbeat(f"Gate D {status}: provenance written to {PROVENANCE.name}")
+        return 0 if status == "PASSED" else 1
 
     heartbeat(f"Gate D: loaded checked-in stage2 ({len(stage2_text)} chars, {stage2_sha})")
     artifact = program_to_dict(load(str(STAGE2)))
