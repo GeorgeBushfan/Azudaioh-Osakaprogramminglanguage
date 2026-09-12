@@ -42,6 +42,59 @@ Tip: Use --debug for traces
 
 ---
 
+## Native toolchain (no Python required)
+
+Osaka is self-hosting: the compiler is written in Osaka, and a native C VM
+runs compiled programs. You can install the whole toolchain on any Mac or
+Linux machine with just a C compiler — no Python needed at run time.
+
+```bash
+# From a checkout of this repository:
+./install.sh                 # installs to /usr/local (or $HOME/.local)
+# or: OSAKA_PREFIX=$HOME/.local ./install.sh
+```
+
+This installs:
+
+- `osaka` — run programs: `osaka run myprog.saka` (compile + run), or
+  `osaka myprog.sbc` to run a compiled artifact
+- `osakac` — compile: `osakac myprog.saka myprog.sbc` (multiple `.saka`
+  files are concatenated in the order given)
+- `osakavm` — the native VM: `osakavm myprog.sbc [args...]`
+- `lib/osakac.stage2.sbc` — the seed compiler artifact (the compiler,
+  written in Osaka, compiled to bytecode)
+
+Write a program anywhere:
+
+```saka
+// hello.saka
+truthaboutgrain x = 6 * 7;
+Say("Hello from Osaka!");
+Say(x);
+```
+
+```bash
+osaka run hello.saka
+# Hello from Osaka!
+# 42
+```
+
+Build a release tarball for distribution (per-OS/arch):
+
+```bash
+make release    # -> dist/osaka-<version>-<os>-<arch>.tar.gz
+```
+
+Recipients unpack it and run `./install.sh` — or just use `bin/osaka`
+directly from the unpacked folder.
+
+> Note: the native compiler currently supports the bootstrap language
+> profile (no `import`, `try/catch`, or classes). Programs using the full
+> Stage 0 language can be compiled with the Python CLI
+> (`python3 saka.py --emit-sbc ...`) and run with `osakavm`.
+
+---
+
 ## Install CLI (`osaka`)
 
 Install from PyPI (recommended):

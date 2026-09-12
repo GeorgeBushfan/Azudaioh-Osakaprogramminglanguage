@@ -1,0 +1,33 @@
+#!/bin/sh
+# osakac — Osaka compiler (no Python required).
+#
+# Usage:
+#   osakac <file.saka> [more.saka ...] <output.sbc>   compile user program(s)
+#   osakac <source_root> <output.sbc>                 compile the bootstrap bundle
+#
+# Runs the checked-in seed compiler artifact on the native VM.
+set -e
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Locate the VM: installed layout (../bin sibling) or repo layout (../native).
+if [ -x "$BIN_DIR/osakavm" ]; then
+    VM="$BIN_DIR/osakavm"
+elif [ -x "$BIN_DIR/../native/osakavm" ]; then
+    VM="$BIN_DIR/../native/osakavm"
+else
+    echo "osakac: cannot find osakavm (looked in $BIN_DIR and $BIN_DIR/../native)" >&2
+    exit 1
+fi
+
+# Locate the seed compiler artifact: installed layout (../lib) or repo layout
+# (../bootstrap).
+if [ -f "$BIN_DIR/../lib/osakac.stage2.sbc" ]; then
+    COMPILER="$BIN_DIR/../lib/osakac.stage2.sbc"
+elif [ -f "$BIN_DIR/../bootstrap/osakac.stage2.sbc" ]; then
+    COMPILER="$BIN_DIR/../bootstrap/osakac.stage2.sbc"
+else
+    echo "osakac: cannot find osakac.stage2.sbc" >&2
+    exit 1
+fi
+
+exec "$VM" "$COMPILER" "$@"

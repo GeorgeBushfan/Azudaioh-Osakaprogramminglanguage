@@ -1,0 +1,55 @@
+#!/bin/sh
+# osaka — Osaka runner (no Python required).
+#
+# Usage:
+#   osaka run <file.saka> [args...]    compile (to a temp file) and run
+#   osaka build <file.saka> [out.sbc]  compile only
+#   osaka <prog.sbc> [args...]         run a compiled program
+set -e
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -x "$BIN_DIR/osakavm" ]; then
+    VM="$BIN_DIR/osakavm"
+elif [ -x "$BIN_DIR/../native/osakavm" ]; then
+    VM="$BIN_DIR/../native/osakavm"
+else
+    echo "osaka: cannot find osakavm (looked in $BIN_DIR and $BIN_DIR/../native)" >&2
+    exit 1
+fi
+
+if [ $# -eq 0 ]; then
+    echo "usage: osaka run <file.saka> [args...]
+       osaka build <file.saka> [out.sbc]
+       osaka <prog.sbc> [args...]" >&2
+    exit 1
+fi
+
+case "$1" in
+    run)
+        shift
+        [ $# -ge 1 ] || { echo "osaka run: missing source file" >&2; exit 1; }
+        src="$1"; shift
+        case "$src" in
+            /*) ;;
+            *) src="$PWD/$src" ;;
+        esac
+        tmpout="$(mktemp -t osaka.XXXXXX).sbc"
+        trap 'rm -f "$tmpout"' EXIT
+        "$BIN_DIR/osakac" "$src" "$tmpout"
+        exec "$VM" "$tmpout" "$@"
+        ;;
+    build)
+        shift
+        [ $# -ge 1 ] || { echo "osaka build: missing source file" >&2; exit 1; }
+        src="$1"; shift
+        out="${1:-${src%.saka}.sbc}"
+        case "$src" in
+            /*) ;;
+            *) src="$PWD/$src" ;;
+        esac
+        exec "$BIN_DIR/osakac" "$src" "$out"
+        ;;
+    *)
+        exec "$VM" "$@"
+        ;;
+esac
