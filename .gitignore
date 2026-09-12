@@ -7,3 +7,14 @@ dist/
 build/
 *.egg-info/
 *.spec
+native/osakavm
+native/osakavm_O0
+native/osakavm_asan
+native/osakavm_asan.dSYM/
+native/osakavm_O0.dSYM/
+native/b
+native/builtins
+native/json
+native/rt
+native/maptest
+native/main.c<

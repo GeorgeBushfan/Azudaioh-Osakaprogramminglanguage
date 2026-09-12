@@ -2,7 +2,7 @@
 
 ## Status
 
-Progress: **Gate D is PASSED.** The compiler fixed point is reached and
+Progress: **Gates A–E are PASSED.** The compiler fixed point is reached and
 verified (Gate C: `SHA256(osakac.stage2.sbc) == SHA256(osakac.stage3.sbc)`,
 recorded in `bootstrap/GATE_C_PROVENANCE.md`), and the full compiler pipeline
 has been re-executed on the Osaka VM itself with byte-identical output
@@ -41,8 +41,14 @@ compiler pipeline (parse → compile → verify → emit) on the Osaka VM via
 byte-identical to the checked-in artifact
 (`SHA256(stage2') == SHA256(stage2)`). Generation N+1 was skipped as
 redundant: Gate C already proved the fixed point, and a byte-identical
-stage2' makes the N+1 cycle a repeat of the identical computation. The
-remaining gate is Gate E (native host).
+stage2' makes the N+1 cycle a repeat of the identical computation.
+
+Gate E (native host) is PASSED: `native/osakavm` — a C translation of
+`selfhost/vm.saka` plus a C host runtime — reproduces the fixed point
+byte-identically (`SHA256(stage2'') == SHA256(stage2)`, recorded in
+`bootstrap/GATE_E_PROVENANCE.md`) and passes the same differential and
+conformance suites as the Python VM. The toolchain is Python-independent
+at run time.
 
 This document defines the bootstrap architecture and the criteria used by this
 repository to describe Osaka as self-hosting. It is normative for self-hosting
@@ -248,7 +254,7 @@ This is the definition of compiler self-hosting.
 This is the definition of a self-hosted implementation whose outer host is
 still Python.
 
-### Gate E — Native host
+### Gate E — Native host — PASSED
 
 - A clean supported machine can build or install the native VM without Python.
 - The native VM runs the checked-in seed compiler and reproduces the fixed
@@ -256,6 +262,23 @@ still Python.
 - The native and Python VMs pass the same bytecode conformance suite.
 
 This is the definition of a Python-independent Osaka toolchain.
+
+**Status: PASSED.** The native VM (`native/osakavm`) is a C translation of
+`selfhost/vm.saka` (via `transpile_vm.py`) plus a C host runtime implementing
+the host-boundary builtins from `docs/NATIVE_HOST_CONTRACT.md`. Build with
+`make` in `native/` (requires only a C compiler and libc/libm — no Python).
+
+Verification record (see `bootstrap/GATE_E_PROVENANCE.md`):
+
+- The native VM executed the checked-in seed compiler
+  (`bootstrap/osakac.stage2.sbc`) over the bundle sources through the full
+  pipeline (parse -> compile -> verify -> emit) in ~42 minutes.
+- `SHA256(stage2'') == SHA256(stage2)`
+  (`c1b04df02fe0fe91130ce60602d0ffca485ee856f2d528e6cf3b16658da45583`) —
+  byte-identical fixed point, reproduced without Python at run time.
+- The 28-case differential suite (`tests/test_native_vm.py`) passes on the
+  native VM, and the conformance corpus matches the Python VM's results
+  exactly (32 pass / 6 compile-error / 2 fail, same exclusions as Gate D).
 
 ## Bootstrap artifact policy
 
