@@ -25,6 +25,7 @@ from parser import Parser
 from compiler import Compiler
 from sbc import program_to_dict
 from tests.test_selfhost_vm import run_on_python_vm, run_on_osaka_vm
+from tests.test_native_vm import _ensure_module_artifacts
 
 ROOT = Path(__file__).resolve().parent
 CORPUS_DIRS = (ROOT / "tests", ROOT / "tests" / "equivalence",
@@ -62,6 +63,14 @@ def run_one(path):
     except Exception as exc:
         record["status"] = "harness-error"
         record["reason"] = f"python vm: {type(exc).__name__}: {exc}"
+        return record
+    # The Osaka VM loads compiled .sbc module artifacts (unlike the Python
+    # VM, which compiles module source on the fly); ensure they exist.
+    try:
+        _ensure_module_artifacts(document, path.resolve().parent)
+    except Exception as exc:
+        record["status"] = "harness-error"
+        record["reason"] = f"module artifacts: {type(exc).__name__}: {exc}"
         return record
     try:
         with contextlib.redirect_stdout(noise):

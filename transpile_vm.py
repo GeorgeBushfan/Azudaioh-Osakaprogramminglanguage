@@ -71,6 +71,7 @@ BUILTIN_C = {
     "values": "b_values",
     "contains": "b_contains",
     "Americaya": "b_americaya",
+    "__sbc_load__": "b_sbc_load",
 }
 
 BIN_OPS = {
@@ -327,9 +328,9 @@ class Transpiler:
         locals_ = [n for n in self.assigned_names(fn) if n not in params]
         sig_params = ", ".join("V* v_%s" % p for p in params) or "void"
         out = []
-        # vm_run / vm_call_func are the native host's entry points (externed
-        # by main.c); everything else is internal to vm.c.
-        linkage = "" if fn.name in ("vm_run", "vm_call_func") else "static "
+        # vm_run / vm_run_at / vm_call_func are the native host's entry
+        # points (externed by main.c); everything else is internal to vm.c.
+        linkage = "" if fn.name in ("vm_run", "vm_run_at", "vm_call_func") else "static "
         out.append("%sV* f_%s(%s) {" % (linkage, fn.name, sig_params))
         out.append("    V* __ret = 0;")
         for l in locals_:
@@ -464,12 +465,12 @@ def main():
             params = native_sigs.get(name, [])
             sig_params = ", ".join("V* v_%s" % p for p in params) or "void"
             lines.append("%sV* f_%s(%s);" % (
-                "static " if name not in ("vm_run", "vm_call_func") else "",
+                "static " if name not in ("vm_run", "vm_run_at", "vm_call_func") else "",
                 name, sig_params))
             continue
         params = list(functions[name].params)
         sig_params = ", ".join("V* v_%s" % p for p in params) or "void"
-        linkage = "" if name in ("vm_run", "vm_call_func") else "static "
+        linkage = "" if name in ("vm_run", "vm_run_at", "vm_call_func") else "static "
         lines.append("%sV* f_%s(%s);" % (linkage, name, sig_params))
     lines.append("")
     for name in order:

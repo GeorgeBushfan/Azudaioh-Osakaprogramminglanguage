@@ -8,8 +8,8 @@ under `bootstrap/.ckpt.gatee.*.json`.
 
 | Stage | SHA256 | Chars |
 | --- | --- | --- |
-| stage2 (checked in) | `c1b04df02fe0fe91130ce60602d0ffca485ee856f2d528e6cf3b16658da45583` | 1183901 |
-| stage2'' (native VM) | `c1b04df02fe0fe91130ce60602d0ffca485ee856f2d528e6cf3b16658da45583` | 1183901 |
+| stage2 (checked in) | `07c2b0f18db27e7faac2b7fd82e8b131434ee9193625d5fc481897f07dc2d690` | 1233542 |
+| stage2'' (native VM) | `07c2b0f18db27e7faac2b7fd82e8b131434ee9193625d5fc481897f07dc2d690` | 1233542 |
 
 **GATE E PASSED**: the native VM executed the full compiler pipeline (parse -> compile -> verify -> emit) and produced byte-identical output to the checked-in stage2 artifact (SHA256(stage2'') == SHA256(stage2)).
 

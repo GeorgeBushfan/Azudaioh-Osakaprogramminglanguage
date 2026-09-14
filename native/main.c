@@ -57,7 +57,17 @@ static int map_has_exact_keys(V* mapval, const char** keys, int n) {
     return 1;
 }
 
+/* Soft-loading mode: loader_error records the message and longjmps back to
+ * load_document_soft instead of exiting (used by __sbc_load__, contract §9). */
+static int g_soft_load = 0;
+static char g_load_err[512];
+static jmp_buf g_load_jmp;
+
 static void loader_error(const char* msg) {
+    if (g_soft_load) {
+        snprintf(g_load_err, sizeof g_load_err, "%s", msg);
+        longjmp(g_load_jmp, 1);
+    }
     fprintf(stderr, "%s\n", msg);
     exit(1);
 }
@@ -182,6 +192,146 @@ V* load_document(const char* text) {
     return rt_pair(doc, K_TRUTH);
 }
 
+/* Load without exiting: returns NULL and sets *err_out on malformed input
+ * (used by __sbc_load__, contract §9). */
+static V* load_document_soft(const char* text, char** err_out) {
+    g_soft_load = 1;
+    if (setjmp(g_load_jmp)) {
+        g_soft_load = 0;
+        *err_out = g_load_err;
+        return NULL;
+    }
+    V* doc = load_document(text);
+    g_soft_load = 0;
+    return doc;
+}
+
+/* ------------------------------------------------------------------ */
+/* Stage-1 module loading: __sbc_load__ (contract §9.1)                */
+/* ------------------------------------------------------------------ */
+
+/* Python os.path.normpath for POSIX paths: collapses "//", "/./" and
+ * "seg/.." (dropping ".." at the root of an absolute path). Empty in → ".". */
+static void normpath_into(const char* in, char* out, size_t outsz) {
+    size_t len = strlen(in);
+    if (len == 0) { snprintf(out, outsz, "."); return; }
+    int absolute = (in[0] == '/');
+    /* component stack: offsets into a scratch copy */
+    char* scratch = (char*)malloc(len + 1);
+    const char** comps = (const char**)malloc((len + 1) * sizeof(char*));
+    int64_t* comp_lens = (int64_t*)malloc((len + 1) * sizeof(int64_t));
+    int ncomp = 0;
+    char* w = scratch;
+    const char* p = in;
+    while (*p) {
+        while (*p == '/') p++;
+        if (!*p) break;
+        const char* start = p;
+        while (*p && *p != '/') p++;
+        int64_t clen = p - start;
+        if (clen == 1 && start[0] == '.') continue;
+        if (clen == 2 && start[0] == '.' && start[1] == '.') {
+            if (ncomp > 0 && !(comp_lens[ncomp - 1] == 2 &&
+                               comps[ncomp - 1][0] == '.' && comps[ncomp - 1][1] == '.')) {
+                ncomp--;          /* pop a real component */
+                continue;
+            }
+            if (absolute) continue;   /* ".." at root is dropped */
+            /* keep the ".." */
+        }
+        comps[ncomp] = w;
+        comp_lens[ncomp] = clen;
+        memcpy(w, start, (size_t)clen);
+        w += clen;
+        *w = 0;
+        w++;
+        ncomp++;
+    }
+    size_t oi = 0;
+    if (absolute && oi < outsz - 1) out[oi++] = '/';
+    for (int i = 0; i < ncomp; i++) {
+        if (i > 0 && oi < outsz - 1) out[oi++] = '/';
+        int64_t cl = comp_lens[i];
+        for (int64_t j = 0; j < cl && oi < outsz - 1; j++) out[oi++] = comps[i][j];
+    }
+    out[oi] = 0;
+    if (oi == 0) snprintf(out, outsz, absolute ? "/" : ".");
+    free(scratch);
+    free(comps);
+    free(comp_lens);
+}
+
+/* Resolve an import path against the importing document's path (contract
+ * §9.2): absolute paths stand alone; otherwise join dirname(base) — or the
+ * process cwd when base is unset — then normalize. */
+static void resolve_module_path(const char* path, const char* base,
+                                char* out, size_t outsz) {
+    if (path[0] == '/') {
+        normpath_into(path, out, outsz);
+        return;
+    }
+    char joined[4096];
+    const char* slash = NULL;
+    if (base && base[0]) {
+        for (const char* q = base; *q; q++)
+            if (*q == '/') slash = q;
+    }
+    if (slash) {
+        snprintf(joined, sizeof joined, "%.*s/%s", (int)(slash - base), base, path);
+    } else {
+        snprintf(joined, sizeof joined, "%s", path);
+    }
+    normpath_into(joined, out, outsz);
+}
+
+V* b_sbc_load(V* path_pair, V* base_pair) {
+    V* pathv = rt_data_of(path_pair);
+    V* basev = rt_data_of(base_pair);
+    const char* path = (pathv && pathv->tag == T_STR) ? pathv->u.str.s : "";
+    const char* base = (basev && basev->tag == T_STR && basev->u.str.len > 0)
+                           ? basev->u.str.s : NULL;
+    char resolved[4096];
+    resolve_module_path(path, base, resolved, sizeof resolved);
+    rt_decref(path_pair);
+    rt_decref(base_pair);
+
+    FILE* f = fopen(resolved, "rb");
+    if (!f) {
+        V* m = rt_new_map();
+        rt_map_set_raw(m, rt_lit("ok"), rt_int(0));
+        char msg[4352];
+        snprintf(msg, sizeof msg, "Module file not found: %s", resolved);
+        rt_map_set_raw(m, rt_lit("message"), rt_str_copy(msg, (int64_t)strlen(msg)));
+        return rt_pair(m, K_TRUTH);
+    }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+    char* buf = (char*)malloc((size_t)size + 1);
+    if (!buf) { fprintf(stderr, "osakavm: out of memory\n"); exit(1); }
+    size_t got = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    buf[got] = 0;
+
+    char* err = NULL;
+    V* docpair = load_document_soft(buf, &err);
+    free(buf);
+    if (!docpair) {
+        V* m = rt_new_map();
+        rt_map_set_raw(m, rt_lit("ok"), rt_int(0));
+        rt_map_set_raw(m, rt_lit("message"), rt_str_copy(err, (int64_t)strlen(err)));
+        return rt_pair(m, K_TRUTH);
+    }
+    V* docmap = rt_data_of(docpair);
+    rt_incref(docmap);
+    rt_decref(docpair);
+    V* m = rt_new_map();
+    rt_map_set_raw(m, rt_lit("ok"), rt_int(1));
+    rt_map_set_raw(m, rt_lit("path"), rt_str_copy(resolved, (int64_t)strlen(resolved)));
+    rt_map_set_raw(m, rt_lit("document"), docmap);
+    return rt_pair(m, K_TRUTH);
+}
+
 /* ------------------------------------------------------------------ */
 /* envelope helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -226,15 +376,19 @@ static V* error_envelope(void) {
 /* ------------------------------------------------------------------ */
 
 extern V* f_vm_run(V* document, V* argv);
+extern V* f_vm_run_at(V* document, V* argv, V* current_file);
 extern V* f_vm_call_func(V* document, V* fname, V* raw_args);
 
-static V* run_document(V* doc, V* argv) {
+static V* run_document(V* doc, V* argv, const char* docpath) {
     rt_err_armed = 1;
     if (setjmp(rt_err_jmp)) {
         rt_err_armed = 0;
         return error_envelope();
     }
-    V* env = f_vm_run(doc, argv);
+    /* Pass the document path so module imports resolve relative to the
+     * document's directory (contract §9.2). */
+    V* pathpair = rt_pair(rt_str_copy(docpath, (int64_t)strlen(docpath)), K_TRUTH);
+    V* env = f_vm_run_at(doc, argv, pathpair);
     rt_err_armed = 0;
     return env;
 }
@@ -292,7 +446,7 @@ int main(int argc, char** argv) {
         } else {
             /* args.json is the guest argv list */
             V* argpair = rt_pair(args, K_TRUTH);
-            env = run_document(doc, argpair);
+            env = run_document(doc, argpair, argv[2]);
         }
         free(atext);
         /* serialize the envelope's raw map */
@@ -315,7 +469,7 @@ int main(int argc, char** argv) {
     V* argvlist = rt_new_list();
     for (int i = 2; i < argc; i++)
         rt_list_append(argvlist, rt_str_copy(argv[i], (int64_t)strlen(argv[i])));
-    V* env = run_document(doc, rt_pair(argvlist, K_TRUTH));
+    V* env = run_document(doc, rt_pair(argvlist, K_TRUTH), argv[1]);
 
     V* envm = rt_data_of(env);
     V* ok = map_get_cstr(envm, "ok");

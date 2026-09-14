@@ -7,6 +7,7 @@ transpiled selfhost/vm.saka). Observable behavior per docs/SELF_HOSTING.md
 """
 
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -14,24 +15,96 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from lexer import lex
+from parser import Parser
+from compiler import Compiler
+from sbc import program_to_dict
 from tests.test_selfhost_vm import compile_document, run_on_python_vm
 
 ROOT = Path(__file__).resolve().parents[1]
 OSAKAVM = ROOT / "native" / "osakavm"
 
 
-def run_on_native_vm(document, argv=()):
+def _compile_source_to_document(text):
+    """Stage 0 front end: source text -> canonical SBC1 document dict."""
+    return program_to_dict(
+        Compiler().compile_program(Parser(lex(text)).parse()))
+
+
+def _collect_saka_imports(document):
+    """Return the .saka import-path strings referenced by a document's
+    constant pools (runtime file-module imports)."""
+    found = []
+    pools = [document.get("constants", [])]
+    for fn in document.get("functions", {}).values():
+        pools.append(fn.get("constants", []))
+    for pool in pools:
+        for rec in pool:
+            data = rec.get("data")
+            if isinstance(data, str) and data.endswith(".saka"):
+                if data not in found:
+                    found.append(data)
+    return found
+
+
+def _ensure_module_artifacts(document, base_dir, _seen=None):
+    """Compile .saka module sources to .sbc artifacts next to them so the
+    native VM (which loads compiled artifacts, unlike the Python VM that
+    compiles source on the fly) can satisfy runtime imports. Recurses into
+    the modules' own imports. Mirrors vm.py's path resolution."""
+    if _seen is None:
+        _seen = set()
+    for raw in _collect_saka_imports(document):
+        path = Path(raw)
+        if path.is_absolute():
+            target = path
+        else:
+            stripped = raw[2:] if raw.startswith("./") else raw
+            target = base_dir / stripped
+        artifact = target.with_suffix(".sbc")
+        key = str(artifact)
+        if key in _seen:
+            continue
+        _seen.add(key)
+        if (not artifact.exists()
+                or artifact.stat().st_mtime < target.stat().st_mtime):
+            module_doc = _compile_source_to_document(
+                target.read_text(encoding="utf-8"))
+            artifact.write_text(
+                json.dumps(module_doc, ensure_ascii=False,
+                           separators=(",", ":")) + "\n",
+                encoding="utf-8")
+        else:
+            module_doc = json.loads(artifact.read_text(encoding="utf-8"))
+        _ensure_module_artifacts(module_doc, target.parent, _seen)
+
+
+def run_on_native_vm(document, argv=(), source_path=None):
     """Run the SBC1 document on the native VM; return the same envelope
-    shape as run_on_python_vm."""
-    doc_path = Path("/tmp/native_test_doc.sbc")
+    shape as run_on_python_vm.
+
+    When source_path is given (the .saka the document was compiled from),
+    the doc is staged in the source's directory so runtime file-module
+    imports resolve exactly like the Python VM's (relative to the source),
+    and module .sbc artifacts are compiled as needed."""
+    if source_path is not None:
+        base_dir = Path(source_path).resolve().parent
+        _ensure_module_artifacts(document, base_dir)
+        doc_path = base_dir / (".native_tmp_%d.sbc" % os.getpid())
+    else:
+        doc_path = Path("/tmp/native_test_doc.sbc")
     args_path = Path("/tmp/native_test_args.json")
     doc_path.write_text(
         json.dumps(document, ensure_ascii=False, separators=(",", ":")) + "\n",
         encoding="utf-8")
     args_path.write_text(json.dumps(list(argv)), encoding="utf-8")
-    proc = subprocess.run(
-        [str(OSAKAVM), "run", str(doc_path), str(args_path)],
-        capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            [str(OSAKAVM), "run", str(doc_path), str(args_path)],
+            capture_output=True, text=True)
+    finally:
+        if source_path is not None:
+            doc_path.unlink(missing_ok=True)
     if not proc.stdout.strip():
         raise RuntimeError("native VM produced no envelope: %s" % proc.stderr)
     envelope = json.loads(proc.stdout)

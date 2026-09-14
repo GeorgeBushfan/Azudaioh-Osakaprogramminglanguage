@@ -26,18 +26,23 @@ static V* f_vm_call_builtin(V* v_state, V* v_frame, V* v_name, V* v_args);
 V* f_vm_call_func(V* v_document, V* v_fname, V* v_raw_args);
 static V* f_vm_class_name(V* v_jt);
 static V* f_vm_derive_locals(V* v_fn);
+static V* f_vm_drive(V* v_state);
 static V* f_vm_error(V* v_state, V* v_message);
+static V* f_vm_export_symbol(V* v_state, V* v_frame, V* v_symbol_name);
 static V* f_vm_get_var(V* v_state, V* v_frame, V* v_name);
+static V* f_vm_import_file_module(V* v_state, V* v_frame, V* v_module_path, V* v_alias);
 static V* f_vm_index_set(V* v_state, V* v_base_name, V* v_container, V* v_index, V* v_newval);
 static V* f_vm_info(V* v_state, V* v_message);
 static V* f_vm_int_to_text(V* v_value);
 static V* f_vm_is_numeric(V* v_jt);
 static V* f_vm_line_of(V* v_state);
 static V* f_vm_make_null(void);
+static V* f_vm_module_artifact_path(V* v_state, V* v_raw_path);
 static V* f_vm_new_frame(V* v_fn, V* v_functions, V* v_ret_ip, V* v_name);
 static V* f_vm_new_state(V* v_argv);
 static V* f_vm_repr(V* v_state, V* v_data);
 V* f_vm_run(V* v_document, V* v_argv);
+V* f_vm_run_at(V* v_document, V* v_argv, V* v_current_file);
 static V* f_vm_step(V* v_state);
 static V* f_vm_store_var(V* v_state, V* v_frame, V* v_name, V* v_val);
 static V* f_vm_str(V* v_state, V* v_data);
@@ -391,7 +396,7 @@ __exit:
 
 static V* f_vm_new_state(V* v_argv) {
     V* __ret = 0;
-    __ret = rt_make_map(21, (V*[]){rt_pair(rt_lit("frames"), K_TRUTH), rt_pair(rt_lit("scopes"), K_TRUTH), rt_pair(rt_lit("functions"), K_TRUTH), rt_pair(rt_lit("arities"), K_TRUTH), rt_pair(rt_lit("argv"), K_TRUTH), rt_pair(rt_lit("stdout"), K_TRUTH), rt_pair(rt_lit("warnings"), K_TRUTH), rt_pair(rt_lit("infos"), K_TRUTH), rt_pair(rt_lit("error"), K_TRUTH), rt_pair(rt_lit("halted"), K_TRUTH), rt_pair(rt_lit("null"), K_TRUTH), rt_pair(rt_lit("imports"), K_TRUTH), rt_pair(rt_lit("current_file"), K_TRUTH), rt_pair(rt_lit("initialised"), K_TRUTH), rt_pair(rt_lit("mutation_warned"), K_TRUTH), rt_pair(rt_lit("acknowledged"), K_TRUTH), rt_pair(rt_lit("assumed"), K_TRUTH), rt_pair(rt_lit("legacy"), K_TRUTH), rt_pair(rt_lit("completed"), K_TRUTH), rt_pair(rt_lit("var_kinds"), K_TRUTH), rt_pair(rt_lit("has_return"), K_TRUTH)}, (V*[]){rt_make_list(0, 0), rt_make_list(1, (V*[]){rt_make_map(0, 0, 0)}), rt_make_map(0, 0, 0), f_vf_builtin_arities(), rt_incref(v_argv), rt_pair(rt_lit(""), K_TRUTH), rt_make_list(0, 0), rt_make_list(0, 0), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), f_vm_make_null(), rt_make_map(0, 0, 0), rt_pair(rt_int(0), K_TRUTH), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0)}); goto __exit;
+    __ret = rt_make_map(25, (V*[]){rt_pair(rt_lit("frames"), K_TRUTH), rt_pair(rt_lit("scopes"), K_TRUTH), rt_pair(rt_lit("functions"), K_TRUTH), rt_pair(rt_lit("arities"), K_TRUTH), rt_pair(rt_lit("argv"), K_TRUTH), rt_pair(rt_lit("stdout"), K_TRUTH), rt_pair(rt_lit("warnings"), K_TRUTH), rt_pair(rt_lit("infos"), K_TRUTH), rt_pair(rt_lit("error"), K_TRUTH), rt_pair(rt_lit("halted"), K_TRUTH), rt_pair(rt_lit("null"), K_TRUTH), rt_pair(rt_lit("imports"), K_TRUTH), rt_pair(rt_lit("current_file"), K_TRUTH), rt_pair(rt_lit("initialised"), K_TRUTH), rt_pair(rt_lit("mutation_warned"), K_TRUTH), rt_pair(rt_lit("acknowledged"), K_TRUTH), rt_pair(rt_lit("assumed"), K_TRUTH), rt_pair(rt_lit("legacy"), K_TRUTH), rt_pair(rt_lit("completed"), K_TRUTH), rt_pair(rt_lit("var_kinds"), K_TRUTH), rt_pair(rt_lit("has_return"), K_TRUTH), rt_pair(rt_lit("module_cache"), K_TRUTH), rt_pair(rt_lit("module_loading"), K_TRUTH), rt_pair(rt_lit("collecting_exports"), K_TRUTH), rt_pair(rt_lit("current_module_exports"), K_TRUTH)}, (V*[]){rt_make_list(0, 0), rt_make_list(1, (V*[]){rt_make_map(0, 0, 0)}), rt_make_map(0, 0, 0), f_vf_builtin_arities(), rt_incref(v_argv), rt_pair(rt_lit(""), K_TRUTH), rt_make_list(0, 0), rt_make_list(0, 0), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), f_vm_make_null(), rt_make_map(0, 0, 0), rt_pair(rt_int(0), K_TRUTH), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH)}); goto __exit;
     __ret = rt_default_ret();
     goto __exit;
 __exit:
@@ -1292,13 +1297,11 @@ static V* f_vm_call_builtin(V* v_state, V* v_frame, V* v_name, V* v_args) {
       } }
     { V* __t = b_americaya(rt_eq_lit(rt_incref(v_resolved), "__import_file_module__")); int __b = rt_truthy(__t); rt_decref(__t);
       if (__b) {
-        rt_decref(f_vm_error(rt_incref(v_state), rt_pair(rt_lit("module system not supported by the self-hosted VM yet"), K_TRUTH)));
-        __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+        __ret = f_vm_import_file_module(rt_incref(v_state), rt_incref(v_frame), rt_index_get(rt_index_get(rt_incref(v_args), rt_pair(rt_int(0), K_TRUTH)), rt_pair(rt_int(0), K_TRUTH)), rt_index_get(rt_index_get(rt_incref(v_args), rt_pair(rt_int(1), K_TRUTH)), rt_pair(rt_int(0), K_TRUTH))); goto __exit;
       } }
     { V* __t = b_americaya(rt_eq_lit(rt_incref(v_resolved), "__export_symbol__")); int __b = rt_truthy(__t); rt_decref(__t);
       if (__b) {
-        rt_decref(f_vm_error(rt_incref(v_state), rt_pair(rt_lit("export can only be used inside module files"), K_TRUTH)));
-        __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+        __ret = f_vm_export_symbol(rt_incref(v_state), rt_incref(v_frame), rt_index_get(rt_index_get(rt_incref(v_args), rt_pair(rt_int(0), K_TRUTH)), rt_pair(rt_int(0), K_TRUTH))); goto __exit;
       } }
     { V* __t = b_americaya(rt_eq_lit(rt_incref(v_resolved), "__force_kind_grain__")); int __b = rt_truthy(__t); rt_decref(__t);
       if (__b) {
@@ -1893,6 +1896,315 @@ __exit:
     rt_decref(v_frames);
     rt_decref(v_top);
     rt_decref(v_handler);
+    return __ret;
+}
+
+static V* f_vm_module_artifact_path(V* v_state, V* v_raw_path) {
+    V* __ret = 0;
+    V* v_path = 0;
+    V* v_base = 0;
+    V* v_cut = 0;
+    V* v_i = 0;
+    { V* __t = rt_incref(v_raw_path);
+      rt_decref(v_path);
+      v_path = __t; }
+    { V* __t = b_americaya(rt_gt(b_len(rt_incref(v_path)), rt_pair(rt_int(5), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        { V* __t = b_americaya(rt_eq_lit(b_slice(rt_incref(v_path), rt_sub(b_len(rt_incref(v_path)), rt_pair(rt_int(5), K_TRUTH)), b_len(rt_incref(v_path))), ".saka")); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            { V* __t = rt_add(b_slice(rt_incref(v_path), rt_pair(rt_int(0), K_TRUTH), rt_sub(b_len(rt_incref(v_path)), rt_pair(rt_int(5), K_TRUTH))), rt_pair(rt_lit(".sbc"), K_TRUTH));
+              rt_decref(v_path);
+              v_path = __t; }
+          } }
+      } }
+    { V* __t = b_americaya(rt_gt(b_len(rt_incref(v_path)), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        { V* __t = b_americaya(rt_eq_lit(b_slice(rt_incref(v_path), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), "/")); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            __ret = rt_incref(v_path); goto __exit;
+          } }
+      } }
+    { V* __t = b_americaya(rt_gt(b_len(rt_incref(v_path)), rt_pair(rt_int(1), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        { V* __t = b_americaya(rt_eq_lit(b_slice(rt_incref(v_path), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(2), K_TRUTH)), "./")); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            { V* __t = b_slice(rt_incref(v_path), rt_pair(rt_int(2), K_TRUTH), b_len(rt_incref(v_path)));
+              rt_decref(v_path);
+              v_path = __t; }
+          } }
+      } }
+    { V* __t = rt_index_get_lit(rt_incref(v_state), "current_file");
+      rt_decref(v_base);
+      v_base = __t; }
+    { V* __t = b_americaya(rt_eq(rt_incref(v_base), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        __ret = rt_incref(v_path); goto __exit;
+      } }
+    { V* __t = rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH));
+      rt_decref(v_cut);
+      v_cut = __t; }
+    { V* __t = rt_sub(b_len(rt_incref(v_base)), rt_pair(rt_int(1), K_TRUTH));
+      rt_decref(v_i);
+      v_i = __t; }
+    for (;;) {
+      { V* __t = b_americaya(rt_ge(rt_incref(v_i), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+        if (!__b) break; }
+        { V* __t = b_americaya(rt_eq_lit(b_slice(rt_incref(v_base), rt_incref(v_i), rt_add(rt_incref(v_i), rt_pair(rt_int(1), K_TRUTH))), "/")); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            { V* __t = rt_incref(v_i);
+              rt_decref(v_cut);
+              v_cut = __t; }
+            { V* __t = rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH));
+              rt_decref(v_i);
+              v_i = __t; }
+          } else {
+            { V* __t = rt_sub(rt_incref(v_i), rt_pair(rt_int(1), K_TRUTH));
+              rt_decref(v_i);
+              v_i = __t; }
+          } }
+    }
+    { V* __t = b_americaya(rt_lt(rt_incref(v_cut), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        __ret = rt_incref(v_path); goto __exit;
+      } }
+    __ret = rt_add(rt_add(b_slice(rt_incref(v_base), rt_pair(rt_int(0), K_TRUTH), rt_incref(v_cut)), rt_pair(rt_lit("/"), K_TRUTH)), rt_incref(v_path)); goto __exit;
+    __ret = rt_default_ret();
+    goto __exit;
+__exit:
+    rt_decref(v_state);
+    rt_decref(v_raw_path);
+    rt_decref(v_path);
+    rt_decref(v_base);
+    rt_decref(v_cut);
+    rt_decref(v_i);
+    return __ret;
+}
+
+static V* f_vm_import_file_module(V* v_state, V* v_frame, V* v_module_path, V* v_alias) {
+    V* __ret = 0;
+    V* v_path = 0;
+    V* v_loaded = 0;
+    V* v_ldata = 0;
+    V* v_resolved = 0;
+    V* v_bundle = 0;
+    V* v_cache = 0;
+    V* v_module_obj = 0;
+    V* v_loading = 0;
+    V* v_mod_state = 0;
+    V* v_entry = 0;
+    V* v_exports = 0;
+    V* v_names = 0;
+    V* v_i = 0;
+    V* v_export_name = 0;
+    V* v_export_data = 0;
+    V* v_fq_name = 0;
+    V* v_scopes = 0;
+    V* v_gscope = 0;
+    V* v_var_kinds_map = 0;
+    V* v_initialised_map = 0;
+    V* v_fn_name = 0;
+    V* v_fns = 0;
+    V* v_frame_functions = 0;
+    { V* __t = f_vm_module_artifact_path(rt_incref(v_state), rt_incref(v_module_path));
+      rt_decref(v_path);
+      v_path = __t; }
+    { V* __t = b_sbc_load(rt_incref(v_path), rt_index_get_lit(rt_incref(v_state), "current_file"));
+      rt_decref(v_loaded);
+      v_loaded = __t; }
+    { V* __t = rt_incref(v_loaded);
+      rt_decref(v_ldata);
+      v_ldata = __t; }
+    { V* __t = b_americaya(rt_eq(rt_index_get_lit(rt_incref(v_ldata), "ok"), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        rt_decref(f_vm_error(rt_incref(v_state), rt_index_get_lit(rt_incref(v_ldata), "message")));
+        __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+      } }
+    { V* __t = rt_index_get_lit(rt_incref(v_ldata), "path");
+      rt_decref(v_resolved);
+      v_resolved = __t; }
+    { V* __t = rt_index_get_lit(rt_incref(v_ldata), "document");
+      rt_decref(v_bundle);
+      v_bundle = __t; }
+    { V* __t = rt_index_get_lit(rt_incref(v_state), "module_cache");
+      rt_decref(v_cache);
+      v_cache = __t; }
+    { V* __t = rt_pair(rt_int(0), K_TRUTH);
+      rt_decref(v_module_obj);
+      v_module_obj = __t; }
+    { V* __t = b_americaya(b_contains(rt_incref(v_cache), rt_incref(v_resolved))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        { V* __t = rt_index_get(rt_incref(v_cache), rt_incref(v_resolved));
+          rt_decref(v_module_obj);
+          v_module_obj = __t; }
+      } else {
+        { V* __t = rt_index_get_lit(rt_incref(v_state), "module_loading");
+          rt_decref(v_loading);
+          v_loading = __t; }
+        { V* __t = b_americaya(b_contains(rt_incref(v_loading), rt_incref(v_resolved))); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            { V* __t = b_americaya(rt_eq(rt_index_get(rt_incref(v_loading), rt_incref(v_resolved)), rt_pair(rt_int(1), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+              if (__b) {
+                rt_decref(f_vm_error(rt_incref(v_state), rt_add(rt_pair(rt_lit("Circular module import detected: "), K_TRUTH), rt_incref(v_resolved))));
+                __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+              } }
+          } }
+        rt_index_set(rt_incref(v_loading), rt_incref(v_resolved), rt_pair(rt_int(1), K_TRUTH));
+        { V* __t = f_vm_new_state(rt_make_list(0, 0));
+          rt_decref(v_mod_state);
+          v_mod_state = __t; }
+        rt_index_set_lit(rt_incref(v_mod_state), "functions", rt_index_get_lit(rt_incref(v_bundle), "functions"));
+        rt_index_set_lit(rt_incref(v_mod_state), "current_file", rt_incref(v_resolved));
+        rt_index_set_lit(rt_incref(v_mod_state), "collecting_exports", rt_pair(rt_int(1), K_TRUTH));
+        rt_index_set_lit(rt_incref(v_mod_state), "current_module_exports", rt_make_map(0, 0, 0));
+        rt_index_set_lit(rt_incref(v_mod_state), "module_cache", rt_index_get_lit(rt_incref(v_state), "module_cache"));
+        rt_index_set_lit(rt_incref(v_mod_state), "module_loading", rt_index_get_lit(rt_incref(v_state), "module_loading"));
+        { V* __t = rt_make_map(12, (V*[]){rt_pair(rt_lit("code"), K_TRUTH), rt_pair(rt_lit("consts"), K_TRUTH), rt_pair(rt_lit("functions"), K_TRUTH), rt_pair(rt_lit("ip"), K_TRUTH), rt_pair(rt_lit("ret_ip"), K_TRUTH), rt_pair(rt_lit("locals"), K_TRUTH), rt_pair(rt_lit("params"), K_TRUTH), rt_pair(rt_lit("stack"), K_TRUTH), rt_pair(rt_lit("line"), K_TRUTH), rt_pair(rt_lit("try"), K_TRUTH), rt_pair(rt_lit("scope_base"), K_TRUTH), rt_pair(rt_lit("name"), K_TRUTH)}, (V*[]){rt_index_get_lit(rt_incref(v_bundle), "main"), rt_index_get_lit(rt_incref(v_bundle), "constants"), rt_index_get_lit(rt_incref(v_bundle), "functions"), rt_pair(rt_int(0), K_TRUTH), rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_list(0, 0), rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), rt_make_list(0, 0), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_lit("main"), K_TRUTH)});
+          rt_decref(v_entry);
+          v_entry = __t; }
+        rt_decref(b_push(rt_index_get_lit(rt_incref(v_mod_state), "frames"), rt_incref(v_entry)));
+        rt_decref(f_vm_drive(rt_incref(v_mod_state)));
+        rt_index_set_lit(rt_incref(v_state), "stdout", rt_add(rt_index_get_lit(rt_incref(v_state), "stdout"), rt_index_get_lit(rt_incref(v_mod_state), "stdout")));
+        { V* __t = b_americaya(rt_ne(rt_index_get_lit(rt_incref(v_mod_state), "error"), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            rt_index_set(rt_incref(v_loading), rt_incref(v_resolved), rt_pair(rt_int(0), K_TRUTH));
+            rt_index_set_lit(rt_incref(v_state), "error", rt_index_get_lit(rt_incref(v_mod_state), "error"));
+            __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+          } }
+        rt_index_set(rt_incref(v_loading), rt_incref(v_resolved), rt_pair(rt_int(0), K_TRUTH));
+        { V* __t = rt_make_map(3, (V*[]){rt_pair(rt_lit("path"), K_TRUTH), rt_pair(rt_lit("exports"), K_TRUTH), rt_pair(rt_lit("functions"), K_TRUTH)}, (V*[]){rt_incref(v_resolved), rt_index_get_lit(rt_incref(v_mod_state), "current_module_exports"), rt_index_get_lit(rt_incref(v_bundle), "functions")});
+          rt_decref(v_module_obj);
+          v_module_obj = __t; }
+        rt_index_set(rt_incref(v_cache), rt_incref(v_resolved), rt_incref(v_module_obj));
+      } }
+    { V* __t = rt_index_get_lit(rt_incref(v_module_obj), "exports");
+      rt_decref(v_exports);
+      v_exports = __t; }
+    { V* __t = b_americaya(b_keys(rt_incref(v_exports)));
+      rt_decref(v_names);
+      v_names = __t; }
+    { V* __t = rt_pair(rt_int(0), K_TRUTH);
+      rt_decref(v_i);
+      v_i = __t; }
+    for (;;) {
+      { V* __t = b_americaya(rt_lt(rt_incref(v_i), b_len(rt_incref(v_names)))); int __b = rt_truthy(__t); rt_decref(__t);
+        if (!__b) break; }
+        { V* __t = rt_index_get(rt_incref(v_names), rt_incref(v_i));
+          rt_decref(v_export_name);
+          v_export_name = __t; }
+        { V* __t = rt_index_get(rt_incref(v_exports), rt_incref(v_export_name));
+          rt_decref(v_export_data);
+          v_export_data = __t; }
+        { V* __t = rt_add(rt_add(rt_incref(v_alias), rt_pair(rt_lit("."), K_TRUTH)), rt_incref(v_export_name));
+          rt_decref(v_fq_name);
+          v_fq_name = __t; }
+        { V* __t = b_americaya(rt_eq_lit(rt_index_get_lit(rt_incref(v_export_data), "type"), "value")); int __b = rt_truthy(__t); rt_decref(__t);
+          if (__b) {
+            { V* __t = rt_index_get_lit(rt_incref(v_state), "scopes");
+              rt_decref(v_scopes);
+              v_scopes = __t; }
+            { V* __t = rt_index_get(rt_incref(v_scopes), rt_sub(b_len(rt_incref(v_scopes)), rt_pair(rt_int(1), K_TRUTH)));
+              rt_decref(v_gscope);
+              v_gscope = __t; }
+            rt_index_set(rt_incref(v_gscope), rt_incref(v_fq_name), rt_make_list(2, (V*[]){rt_index_get_lit(rt_incref(v_export_data), "value"), rt_index_get_lit(rt_incref(v_export_data), "kind")}));
+            { V* __t = rt_index_get_lit(rt_incref(v_state), "var_kinds");
+              rt_decref(v_var_kinds_map);
+              v_var_kinds_map = __t; }
+            rt_index_set(rt_incref(v_var_kinds_map), rt_incref(v_fq_name), rt_index_get_lit(rt_incref(v_export_data), "kind"));
+            { V* __t = rt_index_get_lit(rt_incref(v_state), "initialised");
+              rt_decref(v_initialised_map);
+              v_initialised_map = __t; }
+            rt_index_set(rt_incref(v_initialised_map), rt_incref(v_fq_name), rt_pair(rt_int(1), K_TRUTH));
+          } else {
+            { V* __t = b_americaya(rt_eq_lit(rt_index_get_lit(rt_incref(v_export_data), "type"), "function")); int __b = rt_truthy(__t); rt_decref(__t);
+              if (__b) {
+                { V* __t = rt_index_get_lit(rt_incref(v_export_data), "name");
+                  rt_decref(v_fn_name);
+                  v_fn_name = __t; }
+                { V* __t = rt_index_get_lit(rt_incref(v_module_obj), "functions");
+                  rt_decref(v_fns);
+                  v_fns = __t; }
+                { V* __t = b_americaya(rt_bool_not(b_contains(rt_incref(v_fns), rt_incref(v_fn_name)))); int __b = rt_truthy(__t); rt_decref(__t);
+                  if (__b) {
+                    rt_decref(f_vm_error(rt_incref(v_state), rt_add(rt_pair(rt_lit("Exported function not found in module: "), K_TRUTH), rt_incref(v_export_name))));
+                    __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+                  } }
+                { V* __t = rt_index_get_lit(rt_incref(v_frame), "functions");
+                  rt_decref(v_frame_functions);
+                  v_frame_functions = __t; }
+                rt_index_set(rt_incref(v_frame_functions), rt_incref(v_fq_name), rt_index_get(rt_incref(v_fns), rt_incref(v_fn_name)));
+              } else {
+                rt_decref(f_vm_error(rt_incref(v_state), rt_add(rt_pair(rt_lit("Unknown export type for "), K_TRUTH), rt_incref(v_export_name))));
+                __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+              } }
+          } }
+        { V* __t = rt_add(rt_incref(v_i), rt_pair(rt_int(1), K_TRUTH));
+          rt_decref(v_i);
+          v_i = __t; }
+    }
+    __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+    __ret = rt_default_ret();
+    goto __exit;
+__exit:
+    rt_decref(v_state);
+    rt_decref(v_frame);
+    rt_decref(v_module_path);
+    rt_decref(v_alias);
+    rt_decref(v_path);
+    rt_decref(v_loaded);
+    rt_decref(v_ldata);
+    rt_decref(v_resolved);
+    rt_decref(v_bundle);
+    rt_decref(v_cache);
+    rt_decref(v_module_obj);
+    rt_decref(v_loading);
+    rt_decref(v_mod_state);
+    rt_decref(v_entry);
+    rt_decref(v_exports);
+    rt_decref(v_names);
+    rt_decref(v_i);
+    rt_decref(v_export_name);
+    rt_decref(v_export_data);
+    rt_decref(v_fq_name);
+    rt_decref(v_scopes);
+    rt_decref(v_gscope);
+    rt_decref(v_var_kinds_map);
+    rt_decref(v_initialised_map);
+    rt_decref(v_fn_name);
+    rt_decref(v_fns);
+    rt_decref(v_frame_functions);
+    return __ret;
+}
+
+static V* f_vm_export_symbol(V* v_state, V* v_frame, V* v_symbol_name) {
+    V* __ret = 0;
+    V* v_exports_map = 0;
+    V* v_val = 0;
+    { V* __t = b_americaya(rt_ne(rt_index_get_lit(rt_incref(v_state), "collecting_exports"), rt_pair(rt_int(1), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        rt_decref(f_vm_error(rt_incref(v_state), rt_pair(rt_lit("export can only be used inside module files"), K_TRUTH)));
+        __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+      } }
+    { V* __t = rt_index_get_lit(rt_incref(v_state), "current_module_exports");
+      rt_decref(v_exports_map);
+      v_exports_map = __t; }
+    { V* __t = b_americaya(b_contains(rt_index_get_lit(rt_incref(v_frame), "functions"), rt_incref(v_symbol_name))); int __b = rt_truthy(__t); rt_decref(__t);
+      if (__b) {
+        rt_index_set(rt_incref(v_exports_map), rt_incref(v_symbol_name), rt_make_map(2, (V*[]){rt_pair(rt_lit("type"), K_TRUTH), rt_pair(rt_lit("name"), K_TRUTH)}, (V*[]){rt_pair(rt_lit("function"), K_TRUTH), rt_incref(v_symbol_name)}));
+        __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+      } }
+    { V* __t = f_vm_get_var(rt_incref(v_state), rt_incref(v_frame), rt_incref(v_symbol_name));
+      rt_decref(v_val);
+      v_val = __t; }
+    rt_index_set(rt_incref(v_exports_map), rt_incref(v_symbol_name), rt_make_map(3, (V*[]){rt_pair(rt_lit("type"), K_TRUTH), rt_pair(rt_lit("value"), K_TRUTH), rt_pair(rt_lit("kind"), K_TRUTH)}, (V*[]){rt_pair(rt_lit("value"), K_TRUTH), rt_index_get(rt_incref(v_val), rt_pair(rt_int(0), K_TRUTH)), rt_index_get(rt_incref(v_val), rt_pair(rt_int(1), K_TRUTH))}));
+    __ret = rt_index_get_lit(rt_incref(v_state), "null"); goto __exit;
+    __ret = rt_default_ret();
+    goto __exit;
+__exit:
+    rt_decref(v_state);
+    rt_decref(v_frame);
+    rt_decref(v_symbol_name);
+    rt_decref(v_exports_map);
+    rt_decref(v_val);
     return __ret;
 }
 
@@ -2573,22 +2885,8 @@ __exit:
     return __ret;
 }
 
-V* f_vm_run(V* v_document, V* v_argv) {
+static V* f_vm_drive(V* v_state) {
     V* __ret = 0;
-    V* v_source = 0;
-    V* v_state = 0;
-    V* v_entry = 0;
-    { V* __t = b_americaya(rt_incref(v_document));
-      rt_decref(v_source);
-      v_source = __t; }
-    { V* __t = f_vm_new_state(rt_incref(v_argv));
-      rt_decref(v_state);
-      v_state = __t; }
-    rt_index_set_lit(rt_incref(v_state), "functions", rt_index_get_lit(rt_incref(v_source), "functions"));
-    { V* __t = rt_make_map(12, (V*[]){rt_pair(rt_lit("code"), K_TRUTH), rt_pair(rt_lit("consts"), K_TRUTH), rt_pair(rt_lit("functions"), K_TRUTH), rt_pair(rt_lit("ip"), K_TRUTH), rt_pair(rt_lit("ret_ip"), K_TRUTH), rt_pair(rt_lit("locals"), K_TRUTH), rt_pair(rt_lit("params"), K_TRUTH), rt_pair(rt_lit("stack"), K_TRUTH), rt_pair(rt_lit("line"), K_TRUTH), rt_pair(rt_lit("try"), K_TRUTH), rt_pair(rt_lit("scope_base"), K_TRUTH), rt_pair(rt_lit("name"), K_TRUTH)}, (V*[]){rt_index_get_lit(rt_incref(v_source), "main"), rt_index_get_lit(rt_incref(v_source), "constants"), rt_index_get_lit(rt_incref(v_source), "functions"), rt_pair(rt_int(0), K_TRUTH), rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_list(0, 0), rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), rt_make_list(0, 0), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_lit("main"), K_TRUTH)});
-      rt_decref(v_entry);
-      v_entry = __t; }
-    rt_decref(b_push(rt_index_get_lit(rt_incref(v_state), "frames"), rt_incref(v_entry)));
     for (;;) {
       { V* __t = b_americaya(rt_gt(b_len(rt_index_get_lit(rt_incref(v_state), "frames")), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
         if (!__b) break; }
@@ -2606,6 +2904,43 @@ V* f_vm_run(V* v_document, V* v_argv) {
           } }
         rt_decref(f_vm_step(rt_incref(v_state)));
     }
+    __ret = rt_pair(rt_int(0), K_TRUTH); goto __exit;
+    __ret = rt_default_ret();
+    goto __exit;
+__exit:
+    rt_decref(v_state);
+    return __ret;
+}
+
+V* f_vm_run(V* v_document, V* v_argv) {
+    V* __ret = 0;
+    __ret = f_vm_run_at(rt_incref(v_document), rt_incref(v_argv), rt_pair(rt_int(0), K_TRUTH)); goto __exit;
+    __ret = rt_default_ret();
+    goto __exit;
+__exit:
+    rt_decref(v_document);
+    rt_decref(v_argv);
+    return __ret;
+}
+
+V* f_vm_run_at(V* v_document, V* v_argv, V* v_current_file) {
+    V* __ret = 0;
+    V* v_source = 0;
+    V* v_state = 0;
+    V* v_entry = 0;
+    { V* __t = b_americaya(rt_incref(v_document));
+      rt_decref(v_source);
+      v_source = __t; }
+    { V* __t = f_vm_new_state(rt_incref(v_argv));
+      rt_decref(v_state);
+      v_state = __t; }
+    rt_index_set_lit(rt_incref(v_state), "current_file", rt_incref(v_current_file));
+    rt_index_set_lit(rt_incref(v_state), "functions", rt_index_get_lit(rt_incref(v_source), "functions"));
+    { V* __t = rt_make_map(12, (V*[]){rt_pair(rt_lit("code"), K_TRUTH), rt_pair(rt_lit("consts"), K_TRUTH), rt_pair(rt_lit("functions"), K_TRUTH), rt_pair(rt_lit("ip"), K_TRUTH), rt_pair(rt_lit("ret_ip"), K_TRUTH), rt_pair(rt_lit("locals"), K_TRUTH), rt_pair(rt_lit("params"), K_TRUTH), rt_pair(rt_lit("stack"), K_TRUTH), rt_pair(rt_lit("line"), K_TRUTH), rt_pair(rt_lit("try"), K_TRUTH), rt_pair(rt_lit("scope_base"), K_TRUTH), rt_pair(rt_lit("name"), K_TRUTH)}, (V*[]){rt_index_get_lit(rt_incref(v_source), "main"), rt_index_get_lit(rt_incref(v_source), "constants"), rt_index_get_lit(rt_incref(v_source), "functions"), rt_pair(rt_int(0), K_TRUTH), rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), rt_make_map(0, 0, 0), rt_make_map(0, 0, 0), rt_make_list(0, 0), rt_sub(rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)), rt_make_list(0, 0), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_lit("main"), K_TRUTH)});
+      rt_decref(v_entry);
+      v_entry = __t; }
+    rt_decref(b_push(rt_index_get_lit(rt_incref(v_state), "frames"), rt_incref(v_entry)));
+    rt_decref(f_vm_drive(rt_incref(v_state)));
     { V* __t = b_americaya(rt_ne(rt_index_get_lit(rt_incref(v_state), "error"), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
       if (__b) {
         __ret = rt_make_map(3, (V*[]){rt_pair(rt_lit("ok"), K_TRUTH), rt_pair(rt_lit("value"), K_TRUTH), rt_pair(rt_lit("diagnostic"), K_TRUTH)}, (V*[]){rt_pair(rt_int(0), K_TRUTH), rt_make_map(2, (V*[]){rt_pair(rt_lit("stdout"), K_TRUTH), rt_pair(rt_lit("warnings"), K_TRUTH)}, (V*[]){rt_index_get_lit(rt_incref(v_state), "stdout"), rt_index_get_lit(rt_incref(v_state), "warnings")}), rt_index_get_lit(rt_incref(v_state), "error")}); goto __exit;
@@ -2616,6 +2951,7 @@ V* f_vm_run(V* v_document, V* v_argv) {
 __exit:
     rt_decref(v_document);
     rt_decref(v_argv);
+    rt_decref(v_current_file);
     rt_decref(v_source);
     rt_decref(v_state);
     rt_decref(v_entry);
@@ -2670,23 +3006,7 @@ V* f_vm_call_func(V* v_document, V* v_fname, V* v_raw_args) {
       rt_decref(v_entry);
       v_entry = __t; }
     rt_decref(b_push(rt_index_get_lit(rt_incref(v_state), "frames"), rt_incref(v_entry)));
-    for (;;) {
-      { V* __t = b_americaya(rt_gt(b_len(rt_index_get_lit(rt_incref(v_state), "frames")), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
-        if (!__b) break; }
-        { V* __t = b_americaya(rt_eq(rt_index_get_lit(rt_incref(v_state), "halted"), rt_pair(rt_int(1), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
-          if (__b) {
-            break;
-          } }
-        { V* __t = b_americaya(rt_ne(rt_index_get_lit(rt_incref(v_state), "error"), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
-          if (__b) {
-            { V* __t = b_americaya(rt_eq(f_vm_unwind(rt_incref(v_state)), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
-              if (__b) {
-                break;
-              } }
-            continue;
-          } }
-        rt_decref(f_vm_step(rt_incref(v_state)));
-    }
+    rt_decref(f_vm_drive(rt_incref(v_state)));
     { V* __t = b_americaya(rt_ne(rt_index_get_lit(rt_incref(v_state), "error"), rt_pair(rt_int(0), K_TRUTH))); int __b = rt_truthy(__t); rt_decref(__t);
       if (__b) {
         __ret = rt_make_map(3, (V*[]){rt_pair(rt_lit("ok"), K_TRUTH), rt_pair(rt_lit("value"), K_TRUTH), rt_pair(rt_lit("diagnostic"), K_TRUTH)}, (V*[]){rt_pair(rt_int(0), K_TRUTH), rt_make_map(2, (V*[]){rt_pair(rt_lit("stdout"), K_TRUTH), rt_pair(rt_lit("warnings"), K_TRUTH)}, (V*[]){rt_index_get_lit(rt_incref(v_state), "stdout"), rt_index_get_lit(rt_incref(v_state), "warnings")}), rt_index_get_lit(rt_incref(v_state), "error")}); goto __exit;
@@ -2724,7 +3044,7 @@ __exit:
 static V* f_vf_builtin_arities(void) {
     V* __ret = 0;
     V* v_arities = 0;
-    v_arities = rt_make_map(68, (V*[]){rt_pair(rt_lit("Ah"), K_TRUTH), rt_pair(rt_lit("Americaya"), K_TRUTH), rt_pair(rt_lit("AppendFile"), K_TRUTH), rt_pair(rt_lit("Args"), K_TRUTH), rt_pair(rt_lit("DeleteFile"), K_TRUTH), rt_pair(rt_lit("FileExists"), K_TRUTH), rt_pair(rt_lit("Getittogether"), K_TRUTH), rt_pair(rt_lit("Hecho"), K_TRUTH), rt_pair(rt_lit("Ivebeengot"), K_TRUTH), rt_pair(rt_lit("Math.E"), K_TRUTH), rt_pair(rt_lit("Math.PI"), K_TRUTH), rt_pair(rt_lit("Math.abs"), K_TRUTH), rt_pair(rt_lit("Math.ceil"), K_TRUTH), rt_pair(rt_lit("Math.clamp"), K_TRUTH), rt_pair(rt_lit("Math.cos"), K_TRUTH), rt_pair(rt_lit("Math.cosh"), K_TRUTH), rt_pair(rt_lit("Math.floor"), K_TRUTH), rt_pair(rt_lit("Math.max"), K_TRUTH), rt_pair(rt_lit("Math.min"), K_TRUTH), rt_pair(rt_lit("Math.pow"), K_TRUTH), rt_pair(rt_lit("Math.random"), K_TRUTH), rt_pair(rt_lit("Math.round"), K_TRUTH), rt_pair(rt_lit("Math.sign"), K_TRUTH), rt_pair(rt_lit("Math.sin"), K_TRUTH), rt_pair(rt_lit("Math.sinh"), K_TRUTH), rt_pair(rt_lit("Math.sqrt"), K_TRUTH), rt_pair(rt_lit("Math.tan"), K_TRUTH), rt_pair(rt_lit("Math.tanh"), K_TRUTH), rt_pair(rt_lit("Math.trunc"), K_TRUTH), rt_pair(rt_lit("Ohmygah"), K_TRUTH), rt_pair(rt_lit("Panic"), K_TRUTH), rt_pair(rt_lit("ReadFile"), K_TRUTH), rt_pair(rt_lit("SataAndagi"), K_TRUTH), rt_pair(rt_lit("Say"), K_TRUTH), rt_pair(rt_lit("WriteFile"), K_TRUTH), rt_pair(rt_lit("__bool_and__"), K_TRUTH), rt_pair(rt_lit("__bool_not__"), K_TRUTH), rt_pair(rt_lit("__bool_or__"), K_TRUTH), rt_pair(rt_lit("__capture_trace__"), K_TRUTH), rt_pair(rt_lit("__export_symbol__"), K_TRUTH), rt_pair(rt_lit("__float_repr__"), K_TRUTH), rt_pair(rt_lit("__force_kind_grain__"), K_TRUTH), rt_pair(rt_lit("__force_kind_truth__"), K_TRUTH), rt_pair(rt_lit("__import_file_module__"), K_TRUTH), rt_pair(rt_lit("__import_module__"), K_TRUTH), rt_pair(rt_lit("__is_bool__"), K_TRUTH), rt_pair(rt_lit("__is_float__"), K_TRUTH), rt_pair(rt_lit("__json_type__"), K_TRUTH), rt_pair(rt_lit("__math_call__"), K_TRUTH), rt_pair(rt_lit("__pop_scope__"), K_TRUTH), rt_pair(rt_lit("__push_scope__"), K_TRUTH), rt_pair(rt_lit("__to_bool_preserve_kind__"), K_TRUTH), rt_pair(rt_lit("__to_truthaboutgrain__"), K_TRUTH), rt_pair(rt_lit("contains"), K_TRUTH), rt_pair(rt_lit("keys"), K_TRUTH), rt_pair(rt_lit("len"), K_TRUTH), rt_pair(rt_lit("pop"), K_TRUTH), rt_pair(rt_lit("push"), K_TRUTH), rt_pair(rt_lit("slice"), K_TRUTH), rt_pair(rt_lit("std.contains"), K_TRUTH), rt_pair(rt_lit("std.keys"), K_TRUTH), rt_pair(rt_lit("std.len"), K_TRUTH), rt_pair(rt_lit("std.pop"), K_TRUTH), rt_pair(rt_lit("std.push"), K_TRUTH), rt_pair(rt_lit("std.slice"), K_TRUTH), rt_pair(rt_lit("std.values"), K_TRUTH), rt_pair(rt_lit("values"), K_TRUTH), rt_pair(rt_lit("youknowsealsright"), K_TRUTH)}, (V*[]){rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(3), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(3), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(3), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)});
+    v_arities = rt_make_map(69, (V*[]){rt_pair(rt_lit("Ah"), K_TRUTH), rt_pair(rt_lit("Americaya"), K_TRUTH), rt_pair(rt_lit("AppendFile"), K_TRUTH), rt_pair(rt_lit("Args"), K_TRUTH), rt_pair(rt_lit("DeleteFile"), K_TRUTH), rt_pair(rt_lit("FileExists"), K_TRUTH), rt_pair(rt_lit("Getittogether"), K_TRUTH), rt_pair(rt_lit("Hecho"), K_TRUTH), rt_pair(rt_lit("Ivebeengot"), K_TRUTH), rt_pair(rt_lit("Math.E"), K_TRUTH), rt_pair(rt_lit("Math.PI"), K_TRUTH), rt_pair(rt_lit("Math.abs"), K_TRUTH), rt_pair(rt_lit("Math.ceil"), K_TRUTH), rt_pair(rt_lit("Math.clamp"), K_TRUTH), rt_pair(rt_lit("Math.cos"), K_TRUTH), rt_pair(rt_lit("Math.cosh"), K_TRUTH), rt_pair(rt_lit("Math.floor"), K_TRUTH), rt_pair(rt_lit("Math.max"), K_TRUTH), rt_pair(rt_lit("Math.min"), K_TRUTH), rt_pair(rt_lit("Math.pow"), K_TRUTH), rt_pair(rt_lit("Math.random"), K_TRUTH), rt_pair(rt_lit("Math.round"), K_TRUTH), rt_pair(rt_lit("Math.sign"), K_TRUTH), rt_pair(rt_lit("Math.sin"), K_TRUTH), rt_pair(rt_lit("Math.sinh"), K_TRUTH), rt_pair(rt_lit("Math.sqrt"), K_TRUTH), rt_pair(rt_lit("Math.tan"), K_TRUTH), rt_pair(rt_lit("Math.tanh"), K_TRUTH), rt_pair(rt_lit("Math.trunc"), K_TRUTH), rt_pair(rt_lit("Ohmygah"), K_TRUTH), rt_pair(rt_lit("Panic"), K_TRUTH), rt_pair(rt_lit("ReadFile"), K_TRUTH), rt_pair(rt_lit("SataAndagi"), K_TRUTH), rt_pair(rt_lit("Say"), K_TRUTH), rt_pair(rt_lit("WriteFile"), K_TRUTH), rt_pair(rt_lit("__bool_and__"), K_TRUTH), rt_pair(rt_lit("__bool_not__"), K_TRUTH), rt_pair(rt_lit("__bool_or__"), K_TRUTH), rt_pair(rt_lit("__capture_trace__"), K_TRUTH), rt_pair(rt_lit("__export_symbol__"), K_TRUTH), rt_pair(rt_lit("__float_repr__"), K_TRUTH), rt_pair(rt_lit("__force_kind_grain__"), K_TRUTH), rt_pair(rt_lit("__force_kind_truth__"), K_TRUTH), rt_pair(rt_lit("__import_file_module__"), K_TRUTH), rt_pair(rt_lit("__import_module__"), K_TRUTH), rt_pair(rt_lit("__is_bool__"), K_TRUTH), rt_pair(rt_lit("__is_float__"), K_TRUTH), rt_pair(rt_lit("__json_type__"), K_TRUTH), rt_pair(rt_lit("__math_call__"), K_TRUTH), rt_pair(rt_lit("__pop_scope__"), K_TRUTH), rt_pair(rt_lit("__push_scope__"), K_TRUTH), rt_pair(rt_lit("__sbc_load__"), K_TRUTH), rt_pair(rt_lit("__to_bool_preserve_kind__"), K_TRUTH), rt_pair(rt_lit("__to_truthaboutgrain__"), K_TRUTH), rt_pair(rt_lit("contains"), K_TRUTH), rt_pair(rt_lit("keys"), K_TRUTH), rt_pair(rt_lit("len"), K_TRUTH), rt_pair(rt_lit("pop"), K_TRUTH), rt_pair(rt_lit("push"), K_TRUTH), rt_pair(rt_lit("slice"), K_TRUTH), rt_pair(rt_lit("std.contains"), K_TRUTH), rt_pair(rt_lit("std.keys"), K_TRUTH), rt_pair(rt_lit("std.len"), K_TRUTH), rt_pair(rt_lit("std.pop"), K_TRUTH), rt_pair(rt_lit("std.push"), K_TRUTH), rt_pair(rt_lit("std.slice"), K_TRUTH), rt_pair(rt_lit("std.values"), K_TRUTH), rt_pair(rt_lit("values"), K_TRUTH), rt_pair(rt_lit("youknowsealsright"), K_TRUTH)}, (V*[]){rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(3), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(0), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(3), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(2), K_TRUTH), rt_pair(rt_int(3), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH), rt_pair(rt_int(1), K_TRUTH)});
     __ret = rt_incref(v_arities);
     goto __exit;
 __exit:

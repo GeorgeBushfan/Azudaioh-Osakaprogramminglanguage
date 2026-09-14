@@ -7,6 +7,7 @@ running on the Python VM). Observable behavior per docs/SELF_HOSTING.md
 (error message text; traces and internal state are not semantics).
 """
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -42,7 +43,6 @@ def run_on_python_vm(document, argv=(), source_path=None):
     runtime = Runtime()
     runtime.program_args = list(argv)
     if source_path is not None:
-        import os
         runtime.current_file = os.path.abspath(source_path)
     vm = VM(runtime)
     error = None
@@ -67,18 +67,19 @@ def run_on_osaka_vm(document, argv=(), source_path=None):
     consts = [
         Value(document, "truth"),
         Value(list(argv), "truth"),
+        Value(os.path.abspath(source_path) if source_path else None, "truth"),
     ]
     code = [
         (PUSH_CONST, 0, -1),
         (PUSH_CONST, 1, -1),
-        (CALL_FUNC, ("vm_run", 2), -1),
+        (PUSH_CONST, 2, -1),
+        (CALL_FUNC, ("vm_run_at", 3), -1),
         (HALT, None, -1),
     ]
     program = BytecodeProgram(consts=consts, code=code, functions=dict(functions))
     verify_program(program)
     runtime = Runtime()
     if source_path is not None:
-        import os
         runtime.current_file = os.path.abspath(source_path)
     vm = VM(runtime)
     vm.run(program)

@@ -68,7 +68,7 @@ def run_one(path):
         return record
     try:
         with contextlib.redirect_stdout(noise):
-            native = run_on_native_vm(document)
+            native = run_on_native_vm(document, source_path=str(path))
     except Exception as exc:
         record["status"] = "harness-error"
         record["reason"] = f"native vm: {type(exc).__name__}: {exc}"

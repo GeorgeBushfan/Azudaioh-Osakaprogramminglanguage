@@ -241,9 +241,11 @@ VM (`vm_call_builtin`) is normative:
    falls through to the final unknown-builtin error.
 4. `__import_module__`: only `"std"` is allowed, else
    `Unknown module <str(module)>`.
-5. `__import_file_module__` → `module system not supported by the
+5. `__import_file_module__` → implemented guest-side per §9 (Stage-1 module
+   loading). Before Stage-1 it raised `module system not supported by the
    self-hosted VM yet`.
-6. `__export_symbol__` → `export can only be used inside module files`.
+6. `__export_symbol__` → implemented guest-side per §9. Outside a module
+   run it raises `export can only be used inside module files`.
 7. All remaining builtins per vm.saka's dispatch (kind forcing, bool ops,
    scope ops, `SataAndagi`, `Americaya`, `Getittogether`, `Ohmygah`,
    `Args`, `Panic`, `Say`, `len`, file I/O, `keys`/`values`/`contains`/
@@ -367,3 +369,136 @@ divergence in arg tuples, function tables, or const pools fails the gate.
 - Buffering granularity of stdout: the envelope carries the full stdout
   text; when the process prints it, byte-identity of the stream is
   required, flush timing is not.
+
+## 9. Stage-1: runtime module loading (SBC module artifacts)
+
+Stage-1 adds runtime `import "<path>" as <alias>;` support to the
+self-hosted/native VM. Design decision: **the VM never compiles source**.
+Modules are pre-compiled SBC1 artifacts; runtime loading reuses the exact
+loader machinery of §6 via one new host builtin. All other module logic
+(resolution, caching, export collection, injection) is guest-side code in
+`selfhost/vm.saka`, so it is verified by the differential suite and flows
+through the seed fixed point like the rest of the VM.
+
+Normative reference for semantics: `vm.py` `_load_file_module`,
+`__import_file_module__`, `__export_symbol__` (lines 84–141, 271–321) and
+`runtime.resolve_module_path`. Error text is byte-normative.
+
+### 9.1 New host builtin: `__sbc_load__(path)` → map, arity 1
+
+`path` is a **resolved** path string (the VM does path resolution itself,
+see §9.2, so the host stays free of module state). The host must:
+
+1. Read the file at `path` as UTF-8 text. On I/O failure:
+   `ReadFile failed: {oserror}` (same text as `ReadFile`, §3.7).
+2. JSON-parse and canonicalize the document exactly per §6 (same schema
+   checks, same error texts, same locals derivation).
+3. Return the canonical bundle as a guest map value with the same shape
+   the VM's own document state uses: `{"constants": [...], "functions":
+   {name: {"code": [...], "constants": [...], "params": [...]}},
+   "main": [...]}`. Kind `"truth"`.
+
+The Python host implements `__sbc_load__` as a thin wrapper over
+`sbc.load(path)`; the native host reuses the §6 loader already in
+`native/main.c`. The §6.6 golden test extends to module artifacts.
+
+### 9.2 Path resolution (guest-side, matches `runtime.resolve_module_path`)
+
+- Absolute paths: used as-is (normalized).
+- Relative paths: resolved against the directory of the **currently
+  executing document** (`state["current_file"]`); for the top-level
+  document this is the process working directory. Each module run sets
+  `current_file` to the module's resolved path, so nested imports resolve
+  relative to the importing module.
+
+### 9.3 Module artifact convention
+
+An import names a `.saka` source path (source of truth for the import
+statement); the VM loads the **compiled artifact** at the same path with
+the `.sbc` extension substituted (`./modules/mod_values.saka` →
+`./modules/mod_values.sbc`). The artifact must have been produced by
+`bin/osakac --module` (M7). If the `.sbc` artifact is missing, the error
+is `Module file not found: <resolved .sbc path>`.
+
+### 9.4 `__import_file_module__(path, alias)` — guest-side semantics
+
+Executed by vm.saka (transpiled to C by Gate E's transpiler):
+
+1. `resolved` = §9.2 resolution of `path`, then §9.3 artifact mapping.
+2. If `resolved` is in `state["module_cache"]` → use the cached module
+   object (cache identity is the resolved artifact path; insertion order
+   of the cache map is not observable).
+3. If `resolved` is in `state["module_loading"]` → unhandled error
+   `Circular module import detected: <resolved>`.
+4. If the artifact file does not exist → unhandled error
+   `Module file not found: <resolved>`.
+5. Add `resolved` to `module_loading`; `bundle = __sbc_load__(resolved)`.
+6. Run the module bundle in a **fresh VM state** with:
+   - `collecting_exports = true`, fresh `current_module_exports` map;
+   - `current_file = resolved` (for nested imports);
+   - **shared** stdout/stderr/warnings channels with the importing run
+     (module execution output is observable);
+   - the module bundle's own function table and constants;
+   - the importer's math RNG seed passed in, and the module's final seed
+     passed back out (the deterministic random sequence spans module
+     runs, matching `vm.py`'s seed hand-off).
+7. On completion, build the module object
+   `{path, exports, functions}` (functions = the bundle's function
+   table), store it in `module_cache` under `resolved`, remove `resolved`
+   from `module_loading`.
+8. Inject exports in insertion order of the exports map. For each
+   `export_name`:
+   - `fq_name = alias + "." + export_name`;
+   - **value export** (`{"type": "value", "value": data, "kind": kind}`):
+     store `[data, kind]` into the importer's current global scope under
+     `fq_name`; record `var_kinds[fq_name] = kind` and mark initialised;
+   - **function export** (`{"type": "function", "name": fn_name}`): look
+     up `fn_name` in the module object's function table; if absent →
+     unhandled error `Exported function not found in module:
+     <export_name>`; else bind the function record into the **current
+     frame's function table** under `fq_name`;
+   - any other type → unhandled error `Unknown export type for
+     <export_name>`.
+9. Return the null pair (kind `"truth"`).
+
+### 9.5 `__export_symbol__(name)` — guest-side, arity 1
+
+Only valid while a module run is collecting exports (the module VM state
+has `collecting_exports` set); otherwise unhandled error `export can only
+be used inside module files`. If `name` is in the module run's function
+table, record `{"type": "function", "name": name}`; otherwise record the
+variable's current value as `{"type": "value", "value": data, "kind":
+kind}` (variable lookup uses the module VM's normal scope-chain rules;
+an unbound name follows the usual used-before-assignment warning path).
+
+### 9.6 VM state additions
+
+`state` gains: `module_cache` (insertion-ordered map, resolved path →
+module object), `module_loading` (list used as a set), `collecting_exports`
+(bool), `current_module_exports` (map or absent), `current_file` (string).
+The cache and loading set are shared across nested module runs (a diamond
+import loads once; the second importer receives the cached object).
+
+### 9.7 Observable-semantics notes
+
+- Module-run stdout interleaves with the importer's in execution order
+  (shared channels), matching the Python VM.
+- Warnings emitted during a module run appear in the run's warnings list.
+- An unhandled error inside a module run propagates as an unhandled error
+  of the whole run (same diagnostic envelope; `where` reflects the
+  innermost module frame).
+- `__export_symbol__` outside a module run keeps the Stage-0 error text
+  (`export can only be used inside module files`) — this is the only
+  error text retained from the Stage-1 stubs.
+
+### 9.8 Tests
+
+- Golden: `sbc.load` vs native `__sbc_load__` on each module artifact
+  (extends §6.6).
+- Differential: value exports, function exports, mixed, nested imports,
+  diamond import (cache), circular import (error text), missing artifact
+  (error text), export of undefined name, `__export_symbol__` outside a
+  module (error text), module stdout interleaving, RNG seed continuity.
+- Conformance: `tests/equivalence/14_file_module_values.saka` and
+  `16_file_module_functions.saka` are un-excluded once the harness
+  pre-compiles their modules to `.sbc` artifacts.

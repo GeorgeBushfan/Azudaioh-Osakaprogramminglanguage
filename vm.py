@@ -277,6 +277,30 @@ class VM:
             self.rt.imports = imports
             return Value(None, "truth")
 
+        if name == "__sbc_load__":
+            # Stage-1 runtime module loading (NATIVE_HOST_CONTRACT §9.1):
+            # resolve path against base (the current document path), read and
+            # validate the SBC1 artifact, and return a result envelope — this
+            # builtin never raises; the guest VM maps ok=0 to its error state.
+            import sbc as _sbc
+            raw_path = args[0].data
+            base = args[1].data
+            if not isinstance(base, str) or not base:
+                base = None
+            if os.path.isabs(raw_path):
+                resolved = os.path.normpath(raw_path)
+            elif base:
+                resolved = os.path.normpath(os.path.join(os.path.dirname(base), raw_path))
+            else:
+                resolved = os.path.normpath(raw_path)
+            if not os.path.exists(resolved):
+                return Value({"ok": 0, "message": f"Module file not found: {resolved}"}, "truth")
+            try:
+                document = _sbc.program_to_dict(_sbc.load(resolved))
+            except Exception as e:
+                return Value({"ok": 0, "message": str(e)}, "truth")
+            return Value({"ok": 1, "path": resolved, "document": document}, "truth")
+
         if name == "__import_file_module__":
             module_path = args[0].data
             alias = args[1].data

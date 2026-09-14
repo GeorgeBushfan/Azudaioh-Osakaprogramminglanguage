@@ -75,7 +75,7 @@ BOOTSTRAP_PUBLIC_BUILTINS = {
 # guest pairs and the host applies the exact Math.* semantics.
 BOOTSTRAP_INTERNAL_BUILTINS = {"__is_float__", "__float_repr__", "__json_type__",
                                "__is_bool__", "__push_scope__", "__pop_scope__",
-                               "__math_call__"}
+                               "__math_call__", "__sbc_load__"}
 
 INTERNAL_BUILTIN_ARITIES = {
     "__bool_and__": 2,
@@ -94,6 +94,7 @@ INTERNAL_BUILTIN_ARITIES = {
     "__import_module__": 1,
     "__pop_scope__": 0,
     "__push_scope__": 0,
+    "__sbc_load__": 2,
     "__to_bool_preserve_kind__": 1,
     "__to_truthaboutgrain__": 1,
 }

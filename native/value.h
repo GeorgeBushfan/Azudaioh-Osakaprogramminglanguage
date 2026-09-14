@@ -185,6 +185,12 @@ V* b_keys(V* m);
 V* b_values(V* m);
 V* b_contains(V* m, V* k);
 V* b_americaya(V* v);
+/* Stage-1 runtime module loading (contract §9.1): __sbc_load__(path, base).
+ * Resolves path against base (the current document path, or null for
+ * process-cwd-relative), reads and validates the SBC1 artifact, and returns
+ * {"ok": 1, "path": <resolved>, "document": <canonical doc>} or
+ * {"ok": 0, "message": <error text>} — never raises. */
+V* b_sbc_load(V* path, V* base);
 
 /* Deterministic Math.random seed (reset per run by main.c). */
 void math_seed_reset(void);

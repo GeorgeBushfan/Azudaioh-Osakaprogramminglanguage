@@ -42,7 +42,11 @@ func vm_new_state(argv) {
         "legacy": {},
         "completed": {},
         "var_kinds": {},
-        "has_return": {}
+        "has_return": {},
+        "module_cache": {},
+        "module_loading": {},
+        "collecting_exports": 0,
+        "current_module_exports": 0
     };
 }
 
@@ -452,12 +456,10 @@ func vm_call_builtin(state, frame, name, args) {
         return state["null"];
     }
     if Americaya(resolved == "__import_file_module__") {
-        vm_error(state, "module system not supported by the self-hosted VM yet");
-        return state["null"];
+        return vm_import_file_module(state, frame, args[0][0], args[1][0]);
     }
     if Americaya(resolved == "__export_symbol__") {
-        vm_error(state, "export can only be used inside module files");
-        return state["null"];
+        return vm_export_symbol(state, frame, args[0][0]);
     }
 
     if Americaya(resolved == "__force_kind_grain__") {
@@ -805,6 +807,176 @@ func vm_unwind(state) {
     return 0;
 }
 
+// ---------- Stage-1 runtime module loading (contract §9) ----------
+
+// Map an import path to its compiled SBC artifact path (contract §9.3):
+// a ".saka" extension is substituted with ".sbc"; absolute paths are used
+// as-is; relative paths are joined against the directory of the currently
+// executing document (contract §9.2). The host normalizes the joined path
+// inside __sbc_load__, so the guest only does textual joining.
+func vm_module_artifact_path(state, raw_path) {
+    truthaboutgrain path = raw_path;
+    if Americaya(len(path) > 5) {
+        if Americaya(slice(path, len(path) - 5, len(path)) == ".saka") {
+            path = slice(path, 0, len(path) - 5) + ".sbc";
+        }
+    }
+    if Americaya(len(path) > 0) {
+        if Americaya(slice(path, 0, 1) == "/") {
+            return path;
+        }
+    }
+    if Americaya(len(path) > 1) {
+        if Americaya(slice(path, 0, 2) == "./") {
+            path = slice(path, 2, len(path));
+        }
+    }
+    truthaboutgrain base = state["current_file"];
+    if Americaya(base == 0) {
+        return path;
+    }
+    // dirname(base): find the last "/".
+    truthaboutgrain cut = 0 - 1;
+    truthaboutgrain i = len(base) - 1;
+    while Americaya(i >= 0) {
+        if Americaya(slice(base, i, i + 1) == "/") {
+            cut = i;
+            i = 0 - 1;
+        } else {
+            i = i - 1;
+        }
+    }
+    if Americaya(cut < 0) {
+        return path;
+    }
+    return slice(base, 0, cut) + "/" + path;
+}
+
+// Port of vm.py __import_file_module__ / _load_file_module. Loads the
+// compiled SBC artifact for an import (the VM never compiles source),
+// runs it in a nested VM state with export collection, caches by resolved
+// path, and injects exports into the importer's scope/frame.
+func vm_import_file_module(state, frame, module_path, alias) {
+    truthaboutgrain path = vm_module_artifact_path(state, module_path);
+    truthaboutgrain loaded = __sbc_load__(path, state["current_file"]);
+    // __sbc_load__ returns the envelope map as a guest value; index its
+    // fields directly (ldata["ok"], ldata["path"], ...).
+    truthaboutgrain ldata = loaded;
+    if Americaya(ldata["ok"] == 0) {
+        vm_error(state, ldata["message"]);
+        return state["null"];
+    }
+    truthaboutgrain resolved = ldata["path"];
+    truthaboutgrain bundle = ldata["document"];
+    truthaboutgrain cache = state["module_cache"];
+    truthaboutgrain module_obj = 0;
+    if Americaya(contains(cache, resolved)) {
+        module_obj = cache[resolved];
+    } else {
+        truthaboutgrain loading = state["module_loading"];
+        if Americaya(contains(loading, resolved)) {
+            if Americaya(loading[resolved] == 1) {
+                vm_error(state, "Circular module import detected: " + resolved);
+                return state["null"];
+            }
+        }
+        loading[resolved] = 1;
+        truthaboutgrain mod_state = vm_new_state([]);
+        mod_state["functions"] = bundle["functions"];
+        mod_state["current_file"] = resolved;
+        mod_state["collecting_exports"] = 1;
+        mod_state["current_module_exports"] = {};
+        // Cache and loading set are shared with the importer (and transitively
+        // with ancestor module runs), so diamond imports load once.
+        mod_state["module_cache"] = state["module_cache"];
+        mod_state["module_loading"] = state["module_loading"];
+        truthaboutgrain entry = {
+            "code": bundle["main"],
+            "consts": bundle["constants"],
+            "functions": bundle["functions"],
+            "ip": 0,
+            "ret_ip": 0 - 1,
+            "locals": {},
+            "params": {},
+            "stack": [],
+            "line": 0 - 1,
+            "try": [],
+            "scope_base": 1,
+            "name": "main"
+        };
+        push(mod_state["frames"], entry);
+        vm_drive(mod_state);
+        // Module output appends after everything the importer printed so
+        // far (shared-channel interleaving, matching vm.py).
+        state["stdout"] = state["stdout"] + mod_state["stdout"];
+        if Americaya(mod_state["error"] != 0) {
+            loading[resolved] = 0;
+            // Propagate as an unhandled error of the importing run so the
+            // importer's try-handlers can catch it (Python exception flow).
+            state["error"] = mod_state["error"];
+            return state["null"];
+        }
+        loading[resolved] = 0;
+        module_obj = {
+            "path": resolved,
+            "exports": mod_state["current_module_exports"],
+            "functions": bundle["functions"]
+        };
+        cache[resolved] = module_obj;
+    }
+    // Inject exports in insertion order (contract §9.4 step 8).
+    truthaboutgrain exports = module_obj["exports"];
+    truthaboutgrain names = Americaya(keys(exports));
+    truthaboutgrain i = 0;
+    while Americaya(i < len(names)) {
+        truthaboutgrain export_name = names[i];
+        truthaboutgrain export_data = exports[export_name];
+        truthaboutgrain fq_name = alias + "." + export_name;
+        if Americaya(export_data["type"] == "value") {
+            truthaboutgrain scopes = state["scopes"];
+            truthaboutgrain gscope = scopes[len(scopes) - 1];
+            gscope[fq_name] = [export_data["value"], export_data["kind"]];
+            truthaboutgrain var_kinds_map = state["var_kinds"];
+            var_kinds_map[fq_name] = export_data["kind"];
+            truthaboutgrain initialised_map = state["initialised"];
+            initialised_map[fq_name] = 1;
+        } else {
+            if Americaya(export_data["type"] == "function") {
+                truthaboutgrain fn_name = export_data["name"];
+                truthaboutgrain fns = module_obj["functions"];
+                if Americaya(not contains(fns, fn_name)) {
+                    vm_error(state, "Exported function not found in module: " + export_name);
+                    return state["null"];
+                }
+                truthaboutgrain frame_functions = frame["functions"];
+                frame_functions[fq_name] = fns[fn_name];
+            } else {
+                vm_error(state, "Unknown export type for " + export_name);
+                return state["null"];
+            }
+        }
+        i = i + 1;
+    }
+    return state["null"];
+}
+
+// Port of vm.py __export_symbol__: record a function or value export while
+// a module run is collecting exports.
+func vm_export_symbol(state, frame, symbol_name) {
+    if Americaya(state["collecting_exports"] != 1) {
+        vm_error(state, "export can only be used inside module files");
+        return state["null"];
+    }
+    truthaboutgrain exports_map = state["current_module_exports"];
+    if Americaya(contains(frame["functions"], symbol_name)) {
+        exports_map[symbol_name] = {"type": "function", "name": symbol_name};
+        return state["null"];
+    }
+    truthaboutgrain val = vm_get_var(state, frame, symbol_name);
+    exports_map[symbol_name] = {"type": "value", "value": val[0], "kind": val[1]};
+    return state["null"];
+}
+
 // ---------- single instruction step ----------
 
 func vm_step(state) {
@@ -1144,13 +1316,34 @@ func vm_step(state) {
 
 // ---------- entry point ----------
 
+// Drive a state to completion: the shared execution loop used by vm_run,
+// vm_call_func, and nested module runs (Stage-1 module loading).
+func vm_drive(state) {
+    while Americaya(len(state["frames"]) > 0) {
+        if Americaya(state["halted"] == 1) { break; }
+        if Americaya(state["error"] != 0) {
+            if Americaya(vm_unwind(state) == 0) { break; }
+            continue;
+        }
+        vm_step(state);
+    }
+    return 0;
+}
+
 // Run an SBC1 document. Returns
 // {"ok": 1, "value": {"stdout", "warnings"}, "diagnostic": 0} on success or
 // {"ok": 0, "value": 0, "diagnostic": {"code", "message"}} on an unhandled
 // runtime error (message text matches Stage 0's RuntimeError strings).
 func vm_run(document, argv) {
+    return vm_run_at(document, argv, 0);
+}
+
+// Run an SBC1 document with an explicit current-file path so module
+// imports resolve relative to the document's directory (contract §9.2).
+func vm_run_at(document, argv, current_file) {
     truthaboutgrain source = Americaya(document);
     truthaboutgrain state = vm_new_state(argv);
+    state["current_file"] = current_file;
     state["functions"] = source["functions"];
 
     truthaboutgrain entry = {
@@ -1169,14 +1362,7 @@ func vm_run(document, argv) {
     };
     push(state["frames"], entry);
 
-    while Americaya(len(state["frames"]) > 0) {
-        if Americaya(state["halted"] == 1) { break; }
-        if Americaya(state["error"] != 0) {
-            if Americaya(vm_unwind(state) == 0) { break; }
-            continue;
-        }
-        vm_step(state);
-    }
+    vm_drive(state);
 
     if Americaya(state["error"] != 0) {
         return {
@@ -1237,14 +1423,7 @@ func vm_call_func(document, fname, raw_args) {
     };
     push(state["frames"], entry);
 
-    while Americaya(len(state["frames"]) > 0) {
-        if Americaya(state["halted"] == 1) { break; }
-        if Americaya(state["error"] != 0) {
-            if Americaya(vm_unwind(state) == 0) { break; }
-            continue;
-        }
-        vm_step(state);
-    }
+    vm_drive(state);
 
     if Americaya(state["error"] != 0) {
         return {

@@ -8,3 +8,27 @@
 [2026-09-12 10:31:12] Gate E: [emit stage2'' SBC text] running on the native VM ...
 [2026-09-12 10:36:44] Gate E: [emit stage2'' SBC text] done in 332s (checkpointed)
 [2026-09-12 10:36:44] Gate E PASSED: provenance written to GATE_E_PROVENANCE.md
+[2026-09-13 22:30:54] Gate E: loaded checked-in stage2 (808845 chars, e69e996dde8c8e30ea063be09ceda569412afd2be0b0cf8a7027539135b57ef3)
+[2026-09-13 22:30:54] Gate E: [parse bundle source] resumed from checkpoint
+[2026-09-13 22:30:54] Gate E: [compile bundle AST] resumed from checkpoint
+[2026-09-13 22:30:54] Gate E: [verify compiled doc] resumed from checkpoint
+[2026-09-13 22:30:54] Gate E: [emit stage2'' SBC text] resumed from checkpoint
+[2026-09-13 22:30:54] Gate E FAILED: provenance written to GATE_E_PROVENANCE.md
+[2026-09-13 22:31:18] Gate E: loaded checked-in stage2 (808845 chars, e69e996dde8c8e30ea063be09ceda569412afd2be0b0cf8a7027539135b57ef3)
+[2026-09-13 22:31:18] Gate E: [parse bundle source] running on the native VM ...
+[2026-09-14 13:15:18] Gate E: loaded checked-in stage2 (808845 chars, e69e996dde8c8e30ea063be09ceda569412afd2be0b0cf8a7027539135b57ef3)
+[2026-09-14 13:15:19] Gate E: [parse bundle source] running on the native VM ...
+[2026-09-14 13:51:06] Gate E: [parse bundle source] done in 2148s (checkpointed)
+[2026-09-14 13:51:06] Gate E: [compile bundle AST] running on the native VM ...
+[2026-09-14 13:51:32] Gate E: [compile bundle AST] done in 26s (checkpointed)
+[2026-09-14 13:51:32] Gate E: [verify compiled doc] running on the native VM ...
+[2026-09-14 13:52:25] Gate E: [verify compiled doc] done in 53s (checkpointed)
+[2026-09-14 13:52:25] Gate E: [emit stage2'' SBC text] running on the native VM ...
+[2026-09-14 13:57:07] Gate E: [emit stage2'' SBC text] done in 282s (checkpointed)
+[2026-09-14 13:57:07] Gate E FAILED: provenance written to GATE_E_PROVENANCE.md
+[2026-09-14 14:23:24] Gate E: loaded checked-in stage2 (1233542 chars, 07c2b0f18db27e7faac2b7fd82e8b131434ee9193625d5fc481897f07dc2d690)
+[2026-09-14 14:23:24] Gate E: [parse bundle source] resumed from checkpoint
+[2026-09-14 14:23:24] Gate E: [compile bundle AST] resumed from checkpoint
+[2026-09-14 14:23:24] Gate E: [verify compiled doc] resumed from checkpoint
+[2026-09-14 14:23:24] Gate E: [emit stage2'' SBC text] resumed from checkpoint
+[2026-09-14 14:23:24] Gate E PASSED: provenance written to GATE_E_PROVENANCE.md
